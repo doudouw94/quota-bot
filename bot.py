@@ -15,15 +15,23 @@ LOG_CHANNEL_ID = 1508882228166398073
 TABLEAU_CHANNEL_ID = None
 tableau_message_id = None
 
-# Connexion à PostgreSQL
+# Connexion PostgreSQL avec gestion d'erreur
 def get_db():
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    if not DATABASE_URL:
-        raise Exception("DATABASE_URL non configurée sur Railway !")
-    return psycopg2.connect(DATABASE_URL)
+    try:
+        DATABASE_URL = os.getenv("DATABASE_URL")
+        if not DATABASE_URL:
+            print("❌ DATABASE_URL non trouvée !")
+            return None
+        conn = psycopg2.connect(DATABASE_URL)
+        print("✅ Connexion PostgreSQL OK")
+        return conn
+    except Exception as e:
+        print(f"❌ Erreur connexion DB: {e}")
+        return None
 
-# Création des tables
-with get_db() as conn:
+# Création tables
+conn = get_db()
+if conn:
     with conn.cursor() as c:
         c.execute('''
             CREATE TABLE IF NOT EXISTS quotas (
@@ -38,10 +46,9 @@ with get_db() as conn:
             );
         ''')
         conn.commit()
+        conn.close()
 
-print("✅ Connexion à PostgreSQL réussie")
-
-# ==================== MENU DÉROULANT ====================
+# ==================== MENU ====================
 class QuotaSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -50,23 +57,23 @@ class QuotaSelect(discord.ui.Select):
             discord.SelectOption(label="Superette", value="Superette", emoji="🏪"),
             discord.SelectOption(label="Speedo", value="Speedo", emoji="⚡")
         ]
-        super().__init__(placeholder="Choisis le type de quota...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Choisis le type...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         type_quota = self.values[0]
-        await interaction.response.send_message(f"**{type_quota}** sélectionné.\n\nCombien en as-tu fait ?", ephemeral=True)
+        await interaction.response.send_message(f"**{type_quota}** sélectionné.\nCombien ?", ephemeral=True)
 
         try:
-            msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
-            qty = int(msg_nombre.content.strip())
-            if qty <= 0:
-                return await interaction.followup.send("❌ Nombre invalide !", ephemeral=True)
+            msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
+            qty = int(msg.content.strip())
+            if qty <= 0: raise ValueError
 
-            await interaction.followup.send("📸 Envoie ta photo maintenant (obligatoire)", ephemeral=True)
+            await interaction.followup.send("📸 Envoie ta photo (obligatoire)", ephemeral=True)
             photo_msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user and m.attachments, timeout=120)
 
             today = date.today().isoformat()
-            with get_db() as conn:
+            conn = get_db()
+            if conn:
                 with conn.cursor() as c:
                     c.execute("SELECT quantity FROM quotas WHERE date=%s AND user_id=%s AND type=%s", 
                               (today, interaction.user.id, type_quota))
@@ -78,34 +85,20 @@ class QuotaSelect(discord.ui.Select):
                         c.execute("INSERT INTO quotas VALUES (%s,%s,%s,%s,%s)",
                                   (today, interaction.user.id, interaction.user.name, type_quota, qty))
                     conn.commit()
+                    conn.close()
 
-            log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel and photo_msg.attachments:
-                file = await photo_msg.attachments[0].to_file()
-                embed = discord.Embed(title="📸 Nouveau Quota", color=discord.Color.gold())
-                embed.add_field(name="Personne", value=interaction.user.mention)
-                embed.add_field(name="Type", value=type_quota)
-                embed.add_field(name="Quantité", value=qty)
-                await log_channel.send(embed=embed, file=file)
+            await interaction.followup.send("✅ Quota enregistré !", ephemeral=True)
 
-            await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
-
-        except Exception as e:
-            await interaction.followup.send("❌ Erreur ou temps écoulé.", ephemeral=True)
+        except Exception:
+            await interaction.followup.send("❌ Erreur.", ephemeral=True)
 
 
 class QuotaView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Faire quota", style=discord.ButtonStyle.green, custom_id="faire_quota")
+    @discord.ui.button(label="Faire quota", style=discord.ButtonStyle.green)
     async def faire_quota(self, interaction: discord.Interaction, button):
-        with get_db() as conn:
-            with conn.cursor() as c:
-                c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
-                if not c.fetchone():
-                    return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
-        
         await interaction.response.send_message(view=QuotaSelectView(), ephemeral=True)
 
 
@@ -115,11 +108,11 @@ class QuotaSelectView(discord.ui.View):
         self.add_item(QuotaSelect())
 
 
-# ==================== LANCEMENT ====================
+# Lancement
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
-    if not token:
-        print("❌ ERREUR : TOKEN non configuré")
-    else:
-        print("✅ Token trouvé, lancement du bot...")
+    if token:
+        print("✅ Bot lancé !")
         bot.run(token)
+    else:
+        print("❌ TOKEN manquant")
