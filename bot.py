@@ -234,4 +234,10 @@ async def resetquotas(ctx):
 
 # ==================== LANCEMENT ====================
 if __name__ == "__main__":
-    bot.run("MTUwODgzMzkxODgxODg0NDc1Mg.GbfMNQ.5Xx9RD7KiFu7L0uI1NvXwBZPtGykCLWjRQPEH4")
+    import os
+    token = os.getenv("TOKEN")
+    if not token:
+        print("❌ ERREUR : Le TOKEN n'est pas configuré sur Railway !")
+    else:
+        print("✅ Token trouvé, lancement du bot...")
+        bot.run(token)
