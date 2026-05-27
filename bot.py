@@ -15,11 +15,11 @@ LOG_CHANNEL_ID = 1508882228166398073
 TABLEAU_CHANNEL_ID = None
 tableau_message_id = None
 
-# Connexion PostgreSQL
+# Connexion à PostgreSQL
 def get_db():
     DATABASE_URL = os.getenv("DATABASE_URL")
     if not DATABASE_URL:
-        raise Exception("DATABASE_URL non configurée !")
+        raise Exception("DATABASE_URL non configurée sur Railway !")
     return psycopg2.connect(DATABASE_URL)
 
 # Création des tables
@@ -39,6 +39,8 @@ with get_db() as conn:
         ''')
         conn.commit()
 
+print("✅ Connexion à PostgreSQL réussie")
+
 # ==================== MENU DÉROULANT ====================
 class QuotaSelect(discord.ui.Select):
     def __init__(self):
@@ -57,12 +59,12 @@ class QuotaSelect(discord.ui.Select):
         try:
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
-            if qty <= 0: raise ValueError
+            if qty <= 0:
+                return await interaction.followup.send("❌ Nombre invalide !", ephemeral=True)
 
             await interaction.followup.send("📸 Envoie ta photo maintenant (obligatoire)", ephemeral=True)
             photo_msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user and m.attachments, timeout=120)
 
-            # Sauvegarde
             today = date.today().isoformat()
             with get_db() as conn:
                 with conn.cursor() as c:
@@ -77,9 +79,8 @@ class QuotaSelect(discord.ui.Select):
                                   (today, interaction.user.id, interaction.user.name, type_quota, qty))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel:
+            if log_channel and photo_msg.attachments:
                 file = await photo_msg.attachments[0].to_file()
                 embed = discord.Embed(title="📸 Nouveau Quota", color=discord.Color.gold())
                 embed.add_field(name="Personne", value=interaction.user.mention)
@@ -87,10 +88,11 @@ class QuotaSelect(discord.ui.Select):
                 embed.add_field(name="Quantité", value=qty)
                 await log_channel.send(embed=embed, file=file)
 
-            await interaction.followup.send("✅ Quota enregistré !", ephemeral=True)
+            await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
 
         except Exception as e:
             await interaction.followup.send("❌ Erreur ou temps écoulé.", ephemeral=True)
+
 
 class QuotaView(discord.ui.View):
     def __init__(self):
@@ -105,6 +107,7 @@ class QuotaView(discord.ui.View):
                     return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
         
         await interaction.response.send_message(view=QuotaSelectView(), ephemeral=True)
+
 
 class QuotaSelectView(discord.ui.View):
     def __init__(self):
