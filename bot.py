@@ -81,7 +81,6 @@ class QuotaSelect(discord.ui.Select):
                                   (today, interaction.user.id, interaction.user.name, type_quota, qty))
                     conn.commit()
 
-            # Log avec photo
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -93,8 +92,13 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
 
-        except Exception:
-            await interaction.followup.send("❌ Temps écoulé ou erreur.", ephemeral=True)
+        except asyncio.TimeoutError:
+            await interaction.followup.send("❌ Temps écoulé.", ephemeral=True)
+        except ValueError:
+            await interaction.followup.send("❌ Nombre invalide.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+            print(f"Quota Error: {e}")
 
 
 class QuotaView(discord.ui.View):
@@ -138,7 +142,7 @@ async def auto_update_tableau():
 
         with get_db() as conn:
             with conn.cursor() as c:
-                c.execute("SELECT user_id, username FROM authorized_users")
+                c.execute("SELECT user_id, username FROM authorized_users ORDER BY username")
                 for user_id, db_name in c.fetchall():
                     member = channel.guild.get_member(user_id)
                     name = member.display_name if member else db_name
@@ -212,7 +216,7 @@ async def adduser(ctx, member: discord.Member):
                 else:
                     await ctx.send(f"✅ **{member.display_name}** a été ajouté avec succès.")
     except Exception as e:
-        await ctx.send("❌ Erreur lors de l'ajout.")
+        await ctx.send("❌ Erreur lors de l'ajout de l'utilisateur.")
         print(f"Adduser Error: {e}")
 
 
@@ -237,6 +241,30 @@ async def removeuser(ctx, member: discord.Member):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def listusers(ctx):
+    """Affiche la liste des utilisateurs autorisés"""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT username FROM authorized_users ORDER BY username")
+                users = c.fetchall()
+
+        if not users:
+            return await ctx.send("📋 Aucun utilisateur autorisé pour le moment.")
+
+        embed = discord.Embed(title="👥 Utilisateurs Autorisés", color=discord.Color.green())
+        user_list = "\n".join([f"• {user[0]}" for user in users])
+        embed.description = user_list
+        embed.set_footer(text=f"Total : {len(users)} utilisateur(s)")
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        await ctx.send("❌ Erreur lors de la récupération de la liste.")
+        print(f"Listusers Error: {e}")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def resetquotas(ctx):
     try:
         with get_db() as conn:
@@ -245,7 +273,7 @@ async def resetquotas(ctx):
                 conn.commit()
         await ctx.send("✅ Quotas du jour reset avec succès.")
     except Exception as e:
-        await ctx.send("❌ Erreur lors du reset.")
+        await ctx.send("❌ Erreur lors du reset des quotas.")
         print(f"Reset Error: {e}")
 
 
