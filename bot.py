@@ -3,7 +3,7 @@ from discord.ext import commands, tasks
 import psycopg2
 import os
 from datetime import date
-import asyncio  # ← Nécessaire pour la suppression
+import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -11,6 +11,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ==================== CONFIG ====================
 LOG_CHANNEL_ID = 1508882228166398073
 TABLEAU_CHANNEL_ID = None
 tableau_message_id = None
@@ -56,7 +57,7 @@ class QuotaSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         type_quota = self.values[0]
         await interaction.response.send_message(f"**{type_quota}** sélectionné.\n\nCombien en as-tu fait ?", ephemeral=True)
-        
+
         try:
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
@@ -73,7 +74,7 @@ class QuotaSelect(discord.ui.Select):
                     c.execute("SELECT quantity FROM quotas WHERE date=%s AND user_id=%s AND type=%s",
                               (today, interaction.user.id, type_quota))
                     result = c.fetchone()
-                   
+
                     if result:
                         c.execute("UPDATE quotas SET quantity=%s WHERE date=%s AND user_id=%s AND type=%s",
                                   (result[0] + qty, today, interaction.user.id, type_quota))
@@ -92,19 +93,14 @@ class QuotaSelect(discord.ui.Select):
                 embed.add_field(name="Quantité", value=qty)
                 await log_channel.send(embed=embed, file=file)
 
-            # ==================== SUCCÈS ====================
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
 
-            # === SUPPRESSION des messages (nombre + photo) ===
-            await asyncio.sleep(0.8)
-            try:
-                await msg_nombre.delete()
-            except:
-                pass
-            try:
-                await photo_msg.delete()
-            except:
-                pass
+            # Suppression des messages temporaires
+            await asyncio.sleep(1)
+            try: await msg_nombre.delete()
+            except: pass
+            try: await photo_msg.delete()
+            except: pass
 
         except asyncio.TimeoutError:
             await interaction.followup.send("❌ Temps écoulé.", ephemeral=True)
@@ -126,7 +122,7 @@ class QuotaView(discord.ui.View):
                 c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
                 if not c.fetchone():
                     return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
-        
+
         await interaction.response.send_message(view=QuotaSelectView(), ephemeral=True)
 
 
@@ -136,44 +132,63 @@ class QuotaSelectView(discord.ui.View):
         self.add_item(QuotaSelect())
 
 
-# ==================== TABLEAU AUTO ====================
-@tasks.loop(seconds=30)
-async def auto_update_tableau():
+# ==================== MISE À JOUR TABLEAU ====================
+async def update_tableau_message():
+    """Fonction centrale de mise à jour du tableau"""
     global TABLEAU_CHANNEL_ID, tableau_message_id
+
     if not TABLEAU_CHANNEL_ID or not tableau_message_id:
-        return
-    channel = bot.get_channel(TABLEAU_CHANNEL_ID)
-    if not channel:
-        return
+        return False
+
     try:
+        channel = bot.get_channel(TABLEAU_CHANNEL_ID)
+        if not channel:
+            print("❌ Salon tableau introuvable")
+            return False
+
         message = await channel.fetch_message(tableau_message_id)
+
         today = date.today().isoformat()
         embed = discord.Embed(title=f"📊 Tableau des Quotas - {date.today().strftime('%d/%m/%Y')}", color=discord.Color.blue())
         description = "**Objectifs :** 40 Contenair | 12 ATM | 2 Superette | ? Speedo\n\n"
-        
+
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT user_id, username FROM authorized_users ORDER BY username")
                 for user_id, db_name in c.fetchall():
                     member = channel.guild.get_member(user_id)
                     name = member.display_name if member else db_name
+
                     c.execute("SELECT type, quantity FROM quotas WHERE date=%s AND user_id=%s", (today, user_id))
-                    quotas = {t: q for t, q in c.fetchall()}
+                    quotas = dict(c.fetchall())
+
                     c_ = quotas.get("Contenair", 0)
                     a_ = quotas.get("Atm", 0)
                     s_ = quotas.get("Superette", 0)
                     sp = quotas.get("Speedo", 0)
+
                     description += f"✅ **{name}**\n"
                     description += f"• Contenair: **{c_}**/40\n"
                     description += f"• ATM: **{a_}**/12\n"
                     description += f"• Superette: **{s_}**/2\n"
                     description += f"• Speedo: **{sp}**\n\n"
-        
+
         embed.description = description
         embed.set_footer(text="Auto • 30s")
         await message.edit(embed=embed)
+        return True
+
+    except discord.NotFound:
+        print("❌ Message du tableau introuvable")
+        return False
     except Exception as e:
         print(f"Tableau Error: {e}")
+        return False
+
+
+@tasks.loop(seconds=30)
+async def auto_update_tableau():
+    await update_tableau_message()
 
 
 # ==================== ON READY ====================
@@ -202,7 +217,36 @@ async def settableau(ctx):
     embed = discord.Embed(title="📊 Tableau des Quotas", description="En attente de quotas...", color=discord.Color.blue())
     msg = await ctx.send(embed=embed)
     tableau_message_id = msg.id
-    await ctx.send("✅ Tableau activé !")
+    await ctx.send("✅ Tableau activé dans ce salon !")
+
+
+@bot.command(aliases=['update', 'updatetab'])
+@commands.has_permissions(administrator=True)
+async def updatetableau(ctx):
+    """Force la mise à jour du tableau"""
+    if not TABLEAU_CHANNEL_ID or not tableau_message_id:
+        return await ctx.send("❌ Tableau non configuré. Utilise `!settableau`")
+    
+    await ctx.send("🔄 Mise à jour en cours...")
+    success = await update_tableau_message()
+    
+    if success:
+        await ctx.send("✅ **Tableau mis à jour avec succès !**")
+    else:
+        await ctx.send("❌ Échec de la mise à jour. Vérifie avec `!statut_tableau`")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def statut_tableau(ctx):
+    """Affiche l'état du tableau"""
+    embed = discord.Embed(title="📊 Statut du Tableau", color=discord.Color.orange())
+    embed.add_field(name="Channel ID", value=str(TABLEAU_CHANNEL_ID) or "❌ Non défini", inline=False)
+    embed.add_field(name="Message ID", value=str(tableau_message_id) or "❌ Non défini", inline=False)
+    embed.add_field(name="Task actif ?", value=auto_update_tableau.is_running(), inline=False)
+    embed.add_field(name="Mise à jour auto", value="Toutes les 30 secondes", inline=False)
+    
+    await ctx.send(embed=embed)
 
 
 @bot.command()
@@ -211,19 +255,15 @@ async def adduser(ctx, member: discord.Member):
     try:
         with get_db() as conn:
             with conn.cursor() as c:
-                c.execute("""
-                    INSERT INTO authorized_users (user_id, username)
-                    VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO NOTHING;
-                """, (member.id, member.display_name))
+                c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING;",
+                          (member.id, member.display_name))
                 conn.commit()
-               
                 if c.rowcount == 0:
                     await ctx.send(f"⚠️ **{member.display_name}** était déjà autorisé.")
                 else:
-                    await ctx.send(f"✅ **{member.display_name}** a été ajouté avec succès.")
+                    await ctx.send(f"✅ **{member.display_name}** ajouté avec succès.")
     except Exception as e:
-        await ctx.send("❌ Erreur lors de l'ajout de l'utilisateur.")
+        await ctx.send("❌ Erreur lors de l'ajout.")
         print(f"Adduser Error: {e}")
 
 
@@ -237,9 +277,9 @@ async def removeuser(ctx, member: discord.Member):
                 deleted = c.rowcount
                 conn.commit()
         if deleted > 0:
-            await ctx.send(f"❌ **{member.display_name}** a été retiré des utilisateurs autorisés.")
+            await ctx.send(f"✅ **{member.display_name}** retiré.")
         else:
-            await ctx.send(f"⚠️ **{member.display_name}** n'était pas dans la liste.")
+            await ctx.send(f"⚠️ **{member.display_name}** n'était pas autorisé.")
     except Exception as e:
         await ctx.send("❌ Erreur lors de la suppression.")
         print(f"Removeuser Error: {e}")
@@ -254,14 +294,14 @@ async def listusers(ctx):
                 c.execute("SELECT username FROM authorized_users ORDER BY username")
                 users = c.fetchall()
         if not users:
-            return await ctx.send("📋 Aucun utilisateur autorisé pour le moment.")
+            return await ctx.send("📋 Aucun utilisateur autorisé.")
+        
         embed = discord.Embed(title="👥 Utilisateurs Autorisés", color=discord.Color.green())
-        user_list = "\n".join([f"• {user[0]}" for user in users])
-        embed.description = user_list
+        embed.description = "\n".join([f"• {user[0]}" for user in users])
         embed.set_footer(text=f"Total : {len(users)} utilisateur(s)")
         await ctx.send(embed=embed)
     except Exception as e:
-        await ctx.send("❌ Erreur lors de la récupération de la liste.")
+        await ctx.send("❌ Erreur lors de la liste.")
         print(f"Listusers Error: {e}")
 
 
@@ -273,9 +313,9 @@ async def resetquotas(ctx):
             with conn.cursor() as c:
                 c.execute("DELETE FROM quotas WHERE date = %s", (date.today().isoformat(),))
                 conn.commit()
-        await ctx.send("✅ Quotas du jour reset avec succès.")
+        await ctx.send("✅ Quotas du jour réinitialisés.")
     except Exception as e:
-        await ctx.send("❌ Erreur lors du reset des quotas.")
+        await ctx.send("❌ Erreur lors du reset.")
         print(f"Reset Error: {e}")
 
 
