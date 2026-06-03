@@ -86,7 +86,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log dans ton canal privé
+            # Log privé
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -96,7 +96,7 @@ class QuotaSelect(discord.ui.Select):
                 embed.add_field(name="Quantité", value=qty, inline=True)
                 await log_channel.send(embed=embed, file=file)
 
-            await interaction.followup.send("✅ **Quota enregistré !**", ephemeral=True)
+            await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
             await update_tableau_message()
 
         except Exception as e:
@@ -127,7 +127,7 @@ class QuotaSelectView(discord.ui.View):
         super().__init__(timeout=180)
         self.add_item(QuotaSelect())
 
-# ==================== FONCTION RAPPEL ====================
+# ==================== FONCTIONS UTILES ====================
 async def do_rappel(ctx_or_interaction):
     week_start = date.today() - timedelta(days=date.today().weekday())
 
@@ -145,7 +145,7 @@ async def do_rappel(ctx_or_interaction):
             member = ctx_or_interaction.guild.get_member(user_id)
             if member:
                 try:
-                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.\nMerci de faire tes quotas !")
+                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.\nMerci de faire tes quotas rapidement !")
                     reminded += 1
                 except:
                     pass
@@ -206,7 +206,6 @@ async def update_tableau_message():
                     description += f"**{rank}. {name}** — **{pts} pts**\n"
                     description += f"• Contenair: {c_} | ATM: {a_} | Superette: {s_} | Speedo: {sp}\n\n"
 
-                # Inactifs
                 c.execute("SELECT user_id FROM authorized_users")
                 all_users = {row[0] for row in c.fetchall()}
                 inactive = all_users - set(users_stats.keys())
@@ -223,9 +222,6 @@ async def update_tableau_message():
         await message.edit(embed=embed)
         return True
 
-    except discord.NotFound:
-        print("❌ Message du tableau supprimé")
-        return False
     except Exception as e:
         print(f"Tableau Error: {e}")
         return False
@@ -245,7 +241,7 @@ async def on_ready():
 @commands.has_permissions(administrator=True)
 async def setup(ctx):
     embed = discord.Embed(title="📊 Système de Quotas Diamond City", 
-                         description="Clique sur les boutons ci-dessous", 
+                         description="Utilise les boutons ci-dessous", 
                          color=discord.Color.blue())
     await ctx.send(embed=embed, view=QuotaView())
 
@@ -259,7 +255,7 @@ async def settableau(ctx):
                          color=discord.Color.gold())
     msg = await ctx.send(embed=embed)
     tableau_message_id = msg.id
-    await ctx.send(f"✅ Tableau activé dans ce salon ! (ID: {ctx.channel.id})")
+    await ctx.send("✅ Tableau activé !")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -270,17 +266,118 @@ async def rappel(ctx):
 @commands.has_permissions(administrator=True)
 async def updatetableau(ctx):
     success = await update_tableau_message()
-    await ctx.send("✅ Tableau mis à jour !" if success else "❌ Erreur de mise à jour.")
+    await ctx.send("✅ Tableau mis à jour !" if success else "❌ Erreur.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def adduser(ctx, member: discord.Member):
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("INSERT INTO authorized_users VALUES (%s, %s) ON CONFLICT DO NOTHING", 
+            c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
                       (member.id, member.display_name))
             conn.commit()
-    await ctx.send(f"✅ {member.display_name} ajouté.")
+    await ctx.send(f"✅ **{member.display_name}** ajouté.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def listusers(ctx):
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT username FROM authorized_users ORDER BY username")
+            users = c.fetchall()
+    await ctx.send("**Utilisateurs autorisés :**\n" + "\n".join([f"• {u[0]}" for u in users]) if users else "Aucun utilisateur.")
+
+# ==================== NOUVELLES COMMANDES ====================
+
+@bot.command()
+async def mesquotas(ctx):
+    """Voir ses propres quotas de la semaine"""
+    week_start = date.today() - timedelta(days=date.today().weekday())
+
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT type, SUM(quantity) as qty
+                FROM quotas 
+                WHERE week_start = %s AND user_id = %s
+                GROUP BY type
+            """, (week_start, ctx.author.id))
+            data = c.fetchall()
+
+    if not data:
+        return await ctx.send("📭 Tu n'as encore rien soumis cette semaine.")
+
+    embed = discord.Embed(title=f"📋 Tes quotas cette semaine", color=discord.Color.blue())
+    total_points = 0
+    for qtype, qty in data:
+        points = qty * POINTS.get(qtype, 1)
+        total_points += points
+        embed.add_field(name=qtype, value=f"{qty} → **{points} pts**", inline=True)
+
+    embed.add_field(name="**Total**", value=f"**{total_points} points**", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def recap(ctx):
+    """Récap détaillé de la semaine"""
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    week_end = week_start + timedelta(days=6)
+
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT username, type, SUM(quantity) as qty
+                FROM quotas 
+                WHERE week_start = %s
+                GROUP BY username, type
+                ORDER BY username
+            """, (week_start,))
+            data = c.fetchall()
+
+            c.execute("SELECT user_id FROM authorized_users")
+            total_members = len(c.fetchall())
+
+    if not data:
+        return await ctx.send("Aucun quota cette semaine.")
+
+    users_stats = {}
+    for username, qtype, qty in data:
+        if username not in users_stats:
+            users_stats[username] = {"types": {}, "points": 0}
+        users_stats[username]["types"][qtype] = qty
+        users_stats[username]["points"] += qty * POINTS.get(qtype, 1)
+
+    embed = discord.Embed(title=f"📊 Récap Complet Semaine {week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m')}", 
+                         color=discord.Color.gold())
+
+    for username, stats in sorted(users_stats.items(), key=lambda x: x[1]["points"], reverse=True):
+        c_ = stats["types"].get("Contenair", 0)
+        a_ = stats["types"].get("Atm", 0)
+        s_ = stats["types"].get("Superette", 0)
+        sp = stats["types"].get("Speedo", 0)
+        pts = stats["points"]
+        embed.add_field(name=f"{username} — {pts} pts", 
+                       value=f"Cont: {c_} | ATM: {a_} | Sup: {s_} | Spe: {sp}", 
+                       inline=False)
+
+    embed.set_footer(text=f"Total membres actifs : {len(users_stats)} / {total_members}")
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def resetquotas(ctx):
+    """Supprime tous les quotas de la semaine en cours"""
+    week_start = date.today() - timedelta(days=date.today().weekday())
+
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM quotas WHERE week_start = %s", (week_start,))
+            deleted = c.rowcount
+            conn.commit()
+
+    await ctx.send(f"✅ **{deleted}** quotas ont été supprimés pour cette semaine.")
+    await update_tableau_message()
 
 # ==================== LANCEMENT ====================
 if __name__ == "__main__":
