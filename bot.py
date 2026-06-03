@@ -17,12 +17,19 @@ TABLEAU_CHANNEL_ID = None
 CLASSEMENT_MESSAGE_ID = None
 QUOTAS_MESSAGE_ID = None
 
-# ==================== OBJECTIFS ====================
+# ==================== OBJECTIFS & POINTS ====================
 OBJECTIFS = {
     "Contenair": 40,
     "Atm": 12,
     "Superette": 2,
     "Speedo": 1
+}
+
+POINTS = {
+    "Contenair": 1,
+    "Atm": 2.5,
+    "Superette": 3,
+    "Speedo": 15
 }
 
 # ==================== DATABASE ====================
@@ -32,9 +39,9 @@ def get_db():
 def migrate_database():
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("DROP TABLE IF EXISTS quotas;")
+            # On ne drop plus la table quotas pour garder l'historique
             c.execute('''
-                CREATE TABLE quotas (
+                CREATE TABLE IF NOT EXISTS quotas (
                     id SERIAL PRIMARY KEY,
                     week_start DATE NOT NULL,
                     user_id BIGINT NOT NULL,
@@ -91,7 +98,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log
+            # Log dans le canal privé
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -156,15 +163,24 @@ async def update_classement():
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
-                    SELECT username, SUM(quantity) as total
-                    FROM quotas WHERE week_start = %s
-                    GROUP BY user_id, username ORDER BY total DESC
+                    SELECT username, 
+                           SUM(quantity * 
+                               CASE type
+                                   WHEN 'Contenair' THEN 1
+                                   WHEN 'Atm' THEN 2.5
+                                   WHEN 'Superette' THEN 3
+                                   WHEN 'Speedo' THEN 15
+                               END) as total_points
+                    FROM quotas 
+                    WHERE week_start = %s
+                    GROUP BY user_id, username 
+                    ORDER BY total_points DESC
                 """, (week_start,))
                 data = c.fetchall()
 
         embed = discord.Embed(title="🏆 Classement par Points", color=discord.Color.gold())
         if data:
-            desc = "\n".join([f"**{i}.** {user} → **{pts}** points" for i, (user, pts) in enumerate(data, 1)])
+            desc = "\n".join([f"**{i}.** {user} → **{pts:.1f}** points" for i, (user, pts) in enumerate(data, 1)])
             embed.description = desc
         else:
             embed.description = "Aucun quota enregistré."
