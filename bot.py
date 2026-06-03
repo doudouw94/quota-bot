@@ -17,7 +17,7 @@ TABLEAU_CHANNEL_ID = None
 CLASSEMENT_MESSAGE_ID = None
 QUOTAS_MESSAGE_ID = None
 
-# ==================== OBJECTIFS & POINTS ====================
+# ==================== OBJECTIFS ====================
 OBJECTIFS = {
     "Contenair": 40,
     "Atm": 12,
@@ -90,6 +90,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
+            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -131,7 +132,6 @@ class QuotaView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
-        
         await do_rappel(interaction)
 
 class QuotaSelectView(discord.ui.View):
@@ -162,14 +162,13 @@ async def do_rappel(interaction: discord.Interaction):
 
     msg = f"✅ Rappel envoyé à **{reminded}** membre(s)."
 
-    # Gestion sécurisée de la réponse
     try:
         await interaction.response.send_message(msg, ephemeral=True)
     except:
         try:
             await interaction.followup.send(msg, ephemeral=True)
         except:
-            await interaction.channel.send(msg)  # fallback
+            await interaction.channel.send(msg)
 
 async def update_tableaux():
     await update_classement()
@@ -285,6 +284,20 @@ async def settableaux(ctx):
     QUOTAS_MESSAGE_ID = msg2.id
 
     await ctx.send("✅ **Deux tableaux créés !**")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def removeuser(ctx, member: discord.Member):
+    """Supprime un utilisateur de la liste autorisée"""
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
+            deleted = c.rowcount
+            conn.commit()
+    if deleted > 0:
+        await ctx.send(f"✅ **{member.display_name}** a été retiré des utilisateurs autorisés.")
+    else:
+        await ctx.send(f"❌ **{member.display_name}** n'était pas dans la liste.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
