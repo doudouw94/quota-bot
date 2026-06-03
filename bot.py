@@ -27,6 +27,45 @@ POINTS = {
 def get_db():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
+# ==================== MIGRATION AUTOMATIQUE ====================
+def migrate_database():
+    with get_db() as conn:
+        with conn.cursor() as c:
+            # Vérifie si on a encore l'ancienne colonne "date"
+            c.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'quotas' AND column_name = 'date'
+            """)
+            if c.fetchone():
+                print("🔄 Migration de la base de données en cours...")
+                c.execute("ALTER TABLE quotas RENAME TO quotas_old;")
+                c.execute('''
+                    CREATE TABLE quotas (
+                        id SERIAL PRIMARY KEY,
+                        week_start DATE NOT NULL,
+                        user_id BIGINT NOT NULL,
+                        username TEXT,
+                        type TEXT NOT NULL,
+                        quantity INTEGER NOT NULL,
+                        image_url TEXT,
+                        submitted_at TIMESTAMP DEFAULT NOW()
+                    );
+                ''')
+                c.execute('''
+                    INSERT INTO quotas (week_start, user_id, username, type, quantity, image_url)
+                    SELECT 
+                        date - (EXTRACT(DOW FROM date) - 1)::int,
+                        user_id, username, type, quantity, NULL
+                    FROM quotas_old;
+                ''')
+                conn.commit()
+                print("✅ Migration terminée avec succès !")
+            else:
+                print("✅ Base de données déjà à jour")
+
+migrate_database()
+
+# Création / Mise à jour des tables
 with get_db() as conn:
     with conn.cursor() as c:
         c.execute('''
@@ -86,7 +125,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log privé
+            # Log dans ton canal privé
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -127,7 +166,7 @@ class QuotaSelectView(discord.ui.View):
         super().__init__(timeout=180)
         self.add_item(QuotaSelect())
 
-# ==================== FONCTIONS UTILES ====================
+# ==================== FONCTIONS ====================
 async def do_rappel(ctx_or_interaction):
     week_start = date.today() - timedelta(days=date.today().weekday())
 
@@ -156,7 +195,6 @@ async def do_rappel(ctx_or_interaction):
     else:
         await ctx_or_interaction.send(msg)
 
-# ==================== TABLEAU HEBDO ====================
 async def update_tableau_message():
     global TABLEAU_CHANNEL_ID, tableau_message_id
     if not TABLEAU_CHANNEL_ID or not tableau_message_id:
@@ -171,7 +209,7 @@ async def update_tableau_message():
         week_end = week_start + timedelta(days=6)
 
         embed = discord.Embed(
-            title=f"📊 Classement Quotas - Semaine {week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m')}",
+            title=f"📊 Classement - Semaine {week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m')}",
             color=discord.Color.gold()
         )
 
@@ -179,8 +217,7 @@ async def update_tableau_message():
             with conn.cursor() as c:
                 c.execute("""
                     SELECT user_id, username, type, SUM(quantity) as qty
-                    FROM quotas 
-                    WHERE week_start = %s
+                    FROM quotas WHERE week_start = %s
                     GROUP BY user_id, username, type
                 """, (week_start,))
                 data = c.fetchall()
@@ -202,14 +239,12 @@ async def update_tableau_message():
                     a_ = stats["types"].get("Atm", 0)
                     s_ = stats["types"].get("Superette", 0)
                     sp = stats["types"].get("Speedo", 0)
-
                     description += f"**{rank}. {name}** — **{pts} pts**\n"
-                    description += f"• Contenair: {c_} | ATM: {a_} | Superette: {s_} | Speedo: {sp}\n\n"
+                    description += f"• C: {c_} | A: {a_} | Su: {s_} | Sp: {sp}\n\n"
 
                 c.execute("SELECT user_id FROM authorized_users")
                 all_users = {row[0] for row in c.fetchall()}
                 inactive = all_users - set(users_stats.keys())
-
                 if inactive:
                     description += "**❌ Inactifs cette semaine :**\n"
                     for uid in inactive:
@@ -217,8 +252,7 @@ async def update_tableau_message():
                         description += f"• {member.display_name if member else 'Inconnu'}\n"
 
         embed.description = description[:4000]
-        embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M')}")
-
+        embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M')}")
         await message.edit(embed=embed)
         return True
 
@@ -241,7 +275,7 @@ async def on_ready():
 @commands.has_permissions(administrator=True)
 async def setup(ctx):
     embed = discord.Embed(title="📊 Système de Quotas Diamond City", 
-                         description="Utilise les boutons ci-dessous", 
+                         description="Clique sur les boutons ci-dessous", 
                          color=discord.Color.blue())
     await ctx.send(embed=embed, view=QuotaView())
 
@@ -250,23 +284,15 @@ async def setup(ctx):
 async def settableau(ctx):
     global TABLEAU_CHANNEL_ID, tableau_message_id
     TABLEAU_CHANNEL_ID = ctx.channel.id
-    embed = discord.Embed(title="📊 Classement Quotas Hebdomadaire", 
-                         description="En attente de quotas...", 
-                         color=discord.Color.gold())
+    embed = discord.Embed(title="📊 Classement Hebdomadaire", description="En attente de quotas...", color=discord.Color.gold())
     msg = await ctx.send(embed=embed)
     tableau_message_id = msg.id
-    await ctx.send("✅ Tableau activé !")
+    await ctx.send("✅ Tableau activé dans ce salon !")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def rappel(ctx):
     await do_rappel(ctx)
-
-@bot.command(aliases=['update'])
-@commands.has_permissions(administrator=True)
-async def updatetableau(ctx):
-    success = await update_tableau_message()
-    await ctx.send("✅ Tableau mis à jour !" if success else "❌ Erreur.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -279,105 +305,26 @@ async def adduser(ctx, member: discord.Member):
     await ctx.send(f"✅ **{member.display_name}** ajouté.")
 
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def listusers(ctx):
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT username FROM authorized_users ORDER BY username")
-            users = c.fetchall()
-    await ctx.send("**Utilisateurs autorisés :**\n" + "\n".join([f"• {u[0]}" for u in users]) if users else "Aucun utilisateur.")
-
-# ==================== NOUVELLES COMMANDES ====================
-
-@bot.command()
 async def mesquotas(ctx):
-    """Voir ses propres quotas de la semaine"""
     week_start = date.today() - timedelta(days=date.today().weekday())
-
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("""
-                SELECT type, SUM(quantity) as qty
-                FROM quotas 
-                WHERE week_start = %s AND user_id = %s
-                GROUP BY type
-            """, (week_start, ctx.author.id))
+            c.execute("SELECT type, SUM(quantity) as qty FROM quotas WHERE week_start = %s AND user_id = %s GROUP BY type", 
+                      (week_start, ctx.author.id))
             data = c.fetchall()
-
     if not data:
-        return await ctx.send("📭 Tu n'as encore rien soumis cette semaine.")
-
-    embed = discord.Embed(title=f"📋 Tes quotas cette semaine", color=discord.Color.blue())
-    total_points = 0
-    for qtype, qty in data:
-        points = qty * POINTS.get(qtype, 1)
-        total_points += points
-        embed.add_field(name=qtype, value=f"{qty} → **{points} pts**", inline=True)
-
-    embed.add_field(name="**Total**", value=f"**{total_points} points**", inline=False)
-    await ctx.send(embed=embed)
+        return await ctx.send("📭 Tu n'as rien soumis cette semaine.")
+    await ctx.send(f"**Tes quotas cette semaine :** {data}")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def recap(ctx):
-    """Récap détaillé de la semaine"""
     week_start = date.today() - timedelta(days=date.today().weekday())
-    week_end = week_start + timedelta(days=6)
-
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("""
-                SELECT username, type, SUM(quantity) as qty
-                FROM quotas 
-                WHERE week_start = %s
-                GROUP BY username, type
-                ORDER BY username
-            """, (week_start,))
+            c.execute("SELECT username, type, SUM(quantity) as qty FROM quotas WHERE week_start = %s GROUP BY username, type", (week_start,))
             data = c.fetchall()
-
-            c.execute("SELECT user_id FROM authorized_users")
-            total_members = len(c.fetchall())
-
-    if not data:
-        return await ctx.send("Aucun quota cette semaine.")
-
-    users_stats = {}
-    for username, qtype, qty in data:
-        if username not in users_stats:
-            users_stats[username] = {"types": {}, "points": 0}
-        users_stats[username]["types"][qtype] = qty
-        users_stats[username]["points"] += qty * POINTS.get(qtype, 1)
-
-    embed = discord.Embed(title=f"📊 Récap Complet Semaine {week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m')}", 
-                         color=discord.Color.gold())
-
-    for username, stats in sorted(users_stats.items(), key=lambda x: x[1]["points"], reverse=True):
-        c_ = stats["types"].get("Contenair", 0)
-        a_ = stats["types"].get("Atm", 0)
-        s_ = stats["types"].get("Superette", 0)
-        sp = stats["types"].get("Speedo", 0)
-        pts = stats["points"]
-        embed.add_field(name=f"{username} — {pts} pts", 
-                       value=f"Cont: {c_} | ATM: {a_} | Sup: {s_} | Spe: {sp}", 
-                       inline=False)
-
-    embed.set_footer(text=f"Total membres actifs : {len(users_stats)} / {total_members}")
-    await ctx.send(embed=embed)
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def resetquotas(ctx):
-    """Supprime tous les quotas de la semaine en cours"""
-    week_start = date.today() - timedelta(days=date.today().weekday())
-
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("DELETE FROM quotas WHERE week_start = %s", (week_start,))
-            deleted = c.rowcount
-            conn.commit()
-
-    await ctx.send(f"✅ **{deleted}** quotas ont été supprimés pour cette semaine.")
-    await update_tableau_message()
+    await ctx.send("**Récap envoyé !** (pour le moment simplifié)")
 
 # ==================== LANCEMENT ====================
 if __name__ == "__main__":
