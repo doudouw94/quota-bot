@@ -27,66 +27,36 @@ POINTS = {
 def get_db():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
-# ==================== MIGRATION AUTOMATIQUE ====================
+# ==================== MIGRATION ULTRA SIMPLE ====================
 def migrate_database():
     with get_db() as conn:
         with conn.cursor() as c:
-            # Vérifie si on a encore l'ancienne colonne "date"
-            c.execute("""
-                SELECT column_name FROM information_schema.columns 
-                WHERE table_name = 'quotas' AND column_name = 'date'
-            """)
-            if c.fetchone():
-                print("🔄 Migration de la base de données en cours...")
-                c.execute("ALTER TABLE quotas RENAME TO quotas_old;")
-                c.execute('''
-                    CREATE TABLE quotas (
-                        id SERIAL PRIMARY KEY,
-                        week_start DATE NOT NULL,
-                        user_id BIGINT NOT NULL,
-                        username TEXT,
-                        type TEXT NOT NULL,
-                        quantity INTEGER NOT NULL,
-                        image_url TEXT,
-                        submitted_at TIMESTAMP DEFAULT NOW()
-                    );
-                ''')
-                c.execute('''
-                    INSERT INTO quotas (week_start, user_id, username, type, quantity, image_url)
-                    SELECT 
-                        date - (EXTRACT(DOW FROM date) - 1)::int,
-                        user_id, username, type, quantity, NULL
-                    FROM quotas_old;
-                ''')
-                conn.commit()
-                print("✅ Migration terminée avec succès !")
-            else:
-                print("✅ Base de données déjà à jour")
+            print("🔄 Réinitialisation de la table quotas...")
+            c.execute("DROP TABLE IF EXISTS quotas;")
+            c.execute("DROP TABLE IF EXISTS quotas_old;")
+            
+            c.execute('''
+                CREATE TABLE quotas (
+                    id SERIAL PRIMARY KEY,
+                    week_start DATE NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    username TEXT,
+                    type TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    image_url TEXT,
+                    submitted_at TIMESTAMP DEFAULT NOW()
+                );
+            ''')
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS authorized_users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT
+                );
+            ''')
+            conn.commit()
+    print("✅ Base de données prête !")
 
 migrate_database()
-
-# Création / Mise à jour des tables
-with get_db() as conn:
-    with conn.cursor() as c:
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS quotas (
-                id SERIAL PRIMARY KEY,
-                week_start DATE NOT NULL,
-                user_id BIGINT NOT NULL,
-                username TEXT,
-                type TEXT NOT NULL,
-                quantity INTEGER NOT NULL,
-                image_url TEXT,
-                submitted_at TIMESTAMP DEFAULT NOW()
-            );
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS authorized_users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT
-            );
-        ''')
-        conn.commit()
 
 print("✅ Connexion PostgreSQL OK")
 
@@ -108,7 +78,8 @@ class QuotaSelect(discord.ui.Select):
         try:
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
-            if qty <= 0: raise ValueError
+            if qty <= 0:
+                raise ValueError
 
             await interaction.followup.send("📸 Envoie ta photo maintenant", ephemeral=True)
             photo_msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user and m.attachments, timeout=120)
@@ -125,7 +96,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log dans ton canal privé
+            # Log dans canal privé
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -158,7 +129,7 @@ class QuotaView(discord.ui.View):
     @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red)
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
+            return await interaction.response.send_message("❌ Seul un admin peut faire ça.", ephemeral=True)
         await do_rappel(interaction)
 
 class QuotaSelectView(discord.ui.View):
@@ -169,12 +140,10 @@ class QuotaSelectView(discord.ui.View):
 # ==================== FONCTIONS ====================
 async def do_rappel(ctx_or_interaction):
     week_start = date.today() - timedelta(days=date.today().weekday())
-
     with get_db() as conn:
         with conn.cursor() as c:
             c.execute("SELECT DISTINCT user_id FROM quotas WHERE week_start = %s", (week_start,))
             active = {row[0] for row in c.fetchall()}
-
             c.execute("SELECT user_id FROM authorized_users")
             all_users = [row[0] for row in c.fetchall()]
 
@@ -184,7 +153,7 @@ async def do_rappel(ctx_or_interaction):
             member = ctx_or_interaction.guild.get_member(user_id)
             if member:
                 try:
-                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.\nMerci de faire tes quotas rapidement !")
+                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.\nMerci de t'y mettre !")
                     reminded += 1
                 except:
                     pass
@@ -199,63 +168,22 @@ async def update_tableau_message():
     global TABLEAU_CHANNEL_ID, tableau_message_id
     if not TABLEAU_CHANNEL_ID or not tableau_message_id:
         return False
-
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(tableau_message_id)
 
-        today = date.today()
-        week_start = today - timedelta(days=today.weekday())
+        week_start = date.today() - timedelta(days=date.today().weekday())
         week_end = week_start + timedelta(days=6)
 
         embed = discord.Embed(
-            title=f"📊 Classement - Semaine {week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m')}",
+            title=f"📊 Classement Semaine {week_start.strftime('%d/%m')} → {week_end.strftime('%d/%m')}",
             color=discord.Color.gold()
         )
+        embed.description = "Aucun quota enregistré pour le moment."
+        embed.set_footer(text=f"Dernière MAJ : {datetime.now().strftime('%H:%M')}")
 
-        with get_db() as conn:
-            with conn.cursor() as c:
-                c.execute("""
-                    SELECT user_id, username, type, SUM(quantity) as qty
-                    FROM quotas WHERE week_start = %s
-                    GROUP BY user_id, username, type
-                """, (week_start,))
-                data = c.fetchall()
-
-                users_stats = {}
-                for user_id, username, qtype, qty in data:
-                    if user_id not in users_stats:
-                        users_stats[user_id] = {"name": username, "types": {}, "points": 0}
-                    users_stats[user_id]["types"][qtype] = qty
-                    users_stats[user_id]["points"] += qty * POINTS.get(qtype, 1)
-
-                ranking = sorted(users_stats.items(), key=lambda x: x[1]["points"], reverse=True)
-
-                description = "**🏆 Classement :**\n\n"
-                for rank, (uid, stats) in enumerate(ranking, 1):
-                    name = stats["name"]
-                    pts = stats["points"]
-                    c_ = stats["types"].get("Contenair", 0)
-                    a_ = stats["types"].get("Atm", 0)
-                    s_ = stats["types"].get("Superette", 0)
-                    sp = stats["types"].get("Speedo", 0)
-                    description += f"**{rank}. {name}** — **{pts} pts**\n"
-                    description += f"• C: {c_} | A: {a_} | Su: {s_} | Sp: {sp}\n\n"
-
-                c.execute("SELECT user_id FROM authorized_users")
-                all_users = {row[0] for row in c.fetchall()}
-                inactive = all_users - set(users_stats.keys())
-                if inactive:
-                    description += "**❌ Inactifs cette semaine :**\n"
-                    for uid in inactive:
-                        member = channel.guild.get_member(uid)
-                        description += f"• {member.display_name if member else 'Inconnu'}\n"
-
-        embed.description = description[:4000]
-        embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M')}")
         await message.edit(embed=embed)
         return True
-
     except Exception as e:
         print(f"Tableau Error: {e}")
         return False
@@ -313,18 +241,8 @@ async def mesquotas(ctx):
                       (week_start, ctx.author.id))
             data = c.fetchall()
     if not data:
-        return await ctx.send("📭 Tu n'as rien soumis cette semaine.")
-    await ctx.send(f"**Tes quotas cette semaine :** {data}")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def recap(ctx):
-    week_start = date.today() - timedelta(days=date.today().weekday())
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT username, type, SUM(quantity) as qty FROM quotas WHERE week_start = %s GROUP BY username, type", (week_start,))
-            data = c.fetchall()
-    await ctx.send("**Récap envoyé !** (pour le moment simplifié)")
+        return await ctx.send("📭 Tu n'as rien fait cette semaine.")
+    await ctx.send(f"**Tes quotas :** {data}")
 
 # ==================== LANCEMENT ====================
 if __name__ == "__main__":
