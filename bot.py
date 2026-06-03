@@ -25,13 +25,6 @@ OBJECTIFS = {
     "Speedo": 1
 }
 
-POINTS = {
-    "Contenair": 1,
-    "Atm": 2.5,
-    "Superette": 3,
-    "Speedo": 15
-}
-
 # ==================== DATABASE ====================
 def get_db():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
@@ -138,6 +131,7 @@ class QuotaView(discord.ui.View):
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
+        
         await do_rappel(interaction)
 
 class QuotaSelectView(discord.ui.View):
@@ -161,14 +155,19 @@ async def do_rappel(ctx_or_interaction):
             member = ctx_or_interaction.guild.get_member(user_id)
             if member:
                 try:
-                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.")
+                    await member.send("⚠️ **Rappel Quotas**\nTu n'as pas encore fait de quota cette semaine.")
                     reminded += 1
                 except:
                     pass
 
     msg = f"✅ Rappel envoyé à **{reminded}** membre(s)."
+
+    # Correction importante ici
     if isinstance(ctx_or_interaction, discord.Interaction):
-        await ctx_or_interaction.followup.send(msg, ephemeral=True)
+        try:
+            await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+        except:
+            await ctx_or_interaction.followup.send(msg, ephemeral=True)
     else:
         await ctx_or_interaction.send(msg)
 
