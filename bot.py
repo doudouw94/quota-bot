@@ -39,7 +39,6 @@ def get_db():
 def migrate_database():
     with get_db() as conn:
         with conn.cursor() as c:
-            # On ne drop plus la table quotas pour garder l'historique
             c.execute('''
                 CREATE TABLE IF NOT EXISTS quotas (
                     id SERIAL PRIMARY KEY,
@@ -98,7 +97,6 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log dans le canal privé
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -148,6 +146,32 @@ class QuotaSelectView(discord.ui.View):
         self.add_item(QuotaSelect())
 
 # ==================== FONCTIONS ====================
+async def do_rappel(ctx_or_interaction):
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT DISTINCT user_id FROM quotas WHERE week_start = %s", (week_start,))
+            active = {row[0] for row in c.fetchall()}
+            c.execute("SELECT user_id FROM authorized_users")
+            all_users = [row[0] for row in c.fetchall()]
+
+    reminded = 0
+    for user_id in all_users:
+        if user_id not in active:
+            member = ctx_or_interaction.guild.get_member(user_id)
+            if member:
+                try:
+                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.")
+                    reminded += 1
+                except:
+                    pass
+
+    msg = f"✅ Rappel envoyé à **{reminded}** membre(s)."
+    if isinstance(ctx_or_interaction, discord.Interaction):
+        await ctx_or_interaction.followup.send(msg, ephemeral=True)
+    else:
+        await ctx_or_interaction.send(msg)
+
 async def update_tableaux():
     await update_classement()
     await update_quotas_tableau()
