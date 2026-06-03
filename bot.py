@@ -140,7 +140,7 @@ class QuotaSelectView(discord.ui.View):
         self.add_item(QuotaSelect())
 
 # ==================== FONCTIONS ====================
-async def do_rappel(ctx_or_interaction):
+async def do_rappel(interaction: discord.Interaction):
     week_start = date.today() - timedelta(days=date.today().weekday())
     with get_db() as conn:
         with conn.cursor() as c:
@@ -152,24 +152,24 @@ async def do_rappel(ctx_or_interaction):
     reminded = 0
     for user_id in all_users:
         if user_id not in active:
-            member = ctx_or_interaction.guild.get_member(user_id)
+            member = interaction.guild.get_member(user_id)
             if member:
                 try:
-                    await member.send("⚠️ **Rappel Quotas**\nTu n'as pas encore fait de quota cette semaine.")
+                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.")
                     reminded += 1
                 except:
                     pass
 
     msg = f"✅ Rappel envoyé à **{reminded}** membre(s)."
 
-    # Correction importante ici
-    if isinstance(ctx_or_interaction, discord.Interaction):
+    # Gestion sécurisée de la réponse
+    try:
+        await interaction.response.send_message(msg, ephemeral=True)
+    except:
         try:
-            await ctx_or_interaction.response.send_message(msg, ephemeral=True)
+            await interaction.followup.send(msg, ephemeral=True)
         except:
-            await ctx_or_interaction.followup.send(msg, ephemeral=True)
-    else:
-        await ctx_or_interaction.send(msg)
+            await interaction.channel.send(msg)  # fallback
 
 async def update_tableaux():
     await update_classement()
@@ -276,55 +276,4 @@ async def settableaux(ctx):
     global TABLEAU_CHANNEL_ID, CLASSEMENT_MESSAGE_ID, QUOTAS_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
 
-    embed1 = discord.Embed(title="🏆 Classement par Points", description="En attente...", color=discord.Color.gold())
-    msg1 = await ctx.send(embed=embed1)
-    CLASSEMENT_MESSAGE_ID = msg1.id
-
-    embed2 = discord.Embed(title="📋 Progression des Quotas", description="Chargement...", color=discord.Color.blue())
-    msg2 = await ctx.send(embed=embed2)
-    QUOTAS_MESSAGE_ID = msg2.id
-
-    await ctx.send("✅ **Deux tableaux créés !**")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def resetquotas(ctx):
-    week_start = date.today() - timedelta(days=date.today().weekday())
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("DELETE FROM quotas WHERE week_start = %s", (week_start,))
-            conn.commit()
-    await ctx.send("✅ **Tous les quotas de la semaine ont été réinitialisés à 0.**")
-    await update_tableaux()
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup(ctx):
-    embed = discord.Embed(title="📊 Système de Quotas Diamond City", description="Clique sur les boutons ci-dessous", color=discord.Color.blue())
-    await ctx.send(embed=embed, view=QuotaView())
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def adduser(ctx, member: discord.Member):
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("""
-                INSERT INTO authorized_users (user_id, username) 
-                VALUES (%s, %s) 
-                ON CONFLICT (user_id) DO NOTHING
-            """, (member.id, member.display_name))
-            conn.commit()
-    await ctx.send(f"✅ **{member.display_name}** ajouté.")
-
-@bot.event
-async def on_ready():
-    print(f"✅ {bot.user} est en ligne !")
-    if not auto_update.is_running():
-        auto_update.start()
-
-if __name__ == "__main__":
-    token = os.getenv("TOKEN")
-    if token:
-        bot.run(token)
-    else:
-        print("❌ TOKEN manquant")
+    embed1 =
