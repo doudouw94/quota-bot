@@ -75,9 +75,10 @@ class QuotaSelect(discord.ui.Select):
         else:
             await self.ask_quantity(interaction, type_quota)
 
-    async def ask_quantity(self, interaction, type_quota, subtype=None):
+    async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
-            await interaction.followup.send(f"**{type_quota}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\n\nCombien en as-tu fait ?", ephemeral=True)
+            
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
             if qty <= 0: raise ValueError
@@ -194,7 +195,6 @@ async def update_tableaux():
 
 async def update_classement():
     if not CLASSEMENT_MESSAGE_ID: return
-    # (Ton code original)
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(CLASSEMENT_MESSAGE_ID)
@@ -294,6 +294,12 @@ async def settableaux(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def setup(ctx):
+    embed = discord.Embed(title="📊 Système de Quotas Diamond City", description="Clique sur les boutons ci-dessous", color=discord.Color.blue())
+    await ctx.send(embed=embed, view=QuotaView())
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def adduser(ctx, member: discord.Member):
     with get_db() as conn:
         with conn.cursor() as c:
@@ -304,12 +310,6 @@ async def adduser(ctx, member: discord.Member):
             """, (member.id, member.display_name))
             conn.commit()
     await ctx.send(f"✅ **{member.display_name}** ajouté.")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup(ctx):
-    embed = discord.Embed(title="📊 Système de Quotas Diamond City", description="Clique sur les boutons ci-dessous", color=discord.Color.blue())
-    await ctx.send(embed=embed, view=QuotaView())
 
 @bot.event
 async def on_ready():
