@@ -58,7 +58,6 @@ def migrate_database():
 migrate_database()
 
 # ==================== VIEWS ====================
-# (Les classes View restent identiques, je ne les recopie pas pour gagner de la place)
 class QuotaSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -104,8 +103,7 @@ class QuotaSelect(discord.ui.Select):
                 embed = discord.Embed(title="📸 Quota Soumis", color=discord.Color.green())
                 embed.add_field(name="Membre", value=interaction.user.mention, inline=False)
                 embed.add_field(name="Type", value=type_quota, inline=True)
-                if subtype:
-                    embed.add_field(name="Sous-type", value=subtype, inline=True)
+                if subtype: embed.add_field(name="Sous-type", value=subtype, inline=True)
                 embed.add_field(name="Quantité", value=qty, inline=True)
                 await log_channel.send(embed=embed, file=file)
 
@@ -120,6 +118,8 @@ class QuotaSelect(discord.ui.Select):
         except Exception as e:
             await interaction.followup.send("❌ Erreur.", ephemeral=True)
             print(e)
+
+# ... (les autres classes View restent les mêmes - QuotaView, QuotaSelectView, SpeedoSubtypeView, etc.)
 
 class QuotaView(discord.ui.View):
     def __init__(self):
@@ -296,9 +296,7 @@ async def update_quotas_tableau():
                             ', '
                         ) FILTER (WHERE sq.subtype IS NOT NULL) as speedo_details
                     FROM authorized_users a
-                    LEFT JOIN quotas q 
-                        ON a.user_id = q.user_id 
-                       AND q.week_start = %s
+                    LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
                     LEFT JOIN (
                         SELECT 
                             user_id,
@@ -345,11 +343,35 @@ async def update_quotas_tableau():
     except Exception as e:
         print(f"Erreur tableau quotas: {e}")
 
-@tasks.loop(minutes=2)
-async def auto_update():
+# ==================== NOUVELLE COMMANDE RESET ====================
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def resetquotas(ctx):
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("DELETE FROM quotas WHERE week_start = %s", (week_start,))
+            conn.commit()
+    
+    await ctx.send("🗑️ **Tous les quotas de la semaine ont été supprimés.**")
+    
+    # Recréation des tableaux
+    global TABLEAU_CHANNEL_ID, CLASSEMENT_MESSAGE_ID, QUOTAS_MESSAGE_ID
+    TABLEAU_CHANNEL_ID = ctx.channel.id
+
+    embed1 = discord.Embed(title="🏆 Classement par Points", description="En attente...", color=discord.Color.gold())
+    msg1 = await ctx.send(embed=embed1)
+    CLASSEMENT_MESSAGE_ID = msg1.id
+
+    embed2 = discord.Embed(title="📋 Progression des Quotas", description="Chargement...", color=discord.Color.blue())
+    msg2 = await ctx.send(embed=embed2)
+    QUOTAS_MESSAGE_ID = msg2.id
+
+    await ctx.send("✅ **Tableaux recréés et prêts !**")
     await update_tableaux()
 
-# ==================== COMMANDES ====================
+# ==================== AUTRES COMMANDES ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def settableaux(ctx):
@@ -390,6 +412,10 @@ async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
     if not auto_update.is_running():
         auto_update.start()
+
+@tasks.loop(minutes=2)
+async def auto_update():
+    await update_tableaux()
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
