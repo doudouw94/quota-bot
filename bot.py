@@ -70,7 +70,7 @@ class QuotaSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         type_quota = self.values[0]
-       
+      
         if type_quota == "Speedo":
             await interaction.response.send_message(view=SpeedoSubtypeView(), ephemeral=True)
         else:
@@ -79,7 +79,7 @@ class QuotaSelect(discord.ui.Select):
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
             await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-           
+          
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
             if qty <= 0: raise ValueError
@@ -99,6 +99,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, subtype, qty, image_url))
                     conn.commit()
 
+            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -111,7 +112,7 @@ class QuotaSelect(discord.ui.Select):
                 await log_channel.send(embed=embed, file=file)
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
-           
+          
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
@@ -119,7 +120,6 @@ class QuotaSelect(discord.ui.Select):
             except: pass
 
             await update_tableaux()
-
         except Exception as e:
             await interaction.followup.send("❌ Erreur.", ephemeral=True)
             print(e)
@@ -168,7 +168,7 @@ class SpeedoSubtypeSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         subtype = self.values[0]
         await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-        
+       
         try:
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
@@ -189,6 +189,7 @@ class SpeedoSubtypeSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, subtype, qty, image_url))
                     conn.commit()
 
+            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -200,7 +201,7 @@ class SpeedoSubtypeSelect(discord.ui.Select):
                 await log_channel.send(embed=embed, file=file)
 
             await interaction.followup.send("✅ **Speedo enregistré avec succès !**", ephemeral=True)
-            
+           
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
@@ -208,7 +209,6 @@ class SpeedoSubtypeSelect(discord.ui.Select):
             except: pass
 
             await update_tableaux()
-
         except Exception as e:
             await interaction.followup.send("❌ Erreur.", ephemeral=True)
             print(e)
@@ -222,6 +222,7 @@ async def do_rappel(interaction: discord.Interaction):
             active = {row[0] for row in c.fetchall()}
             c.execute("SELECT user_id FROM authorized_users")
             all_users = [row[0] for row in c.fetchall()]
+
     reminded = 0
     for user_id in all_users:
         if user_id not in active:
@@ -232,6 +233,7 @@ async def do_rappel(interaction: discord.Interaction):
                     reminded += 1
                 except:
                     pass
+
     msg = f"✅ Rappel envoyé à **{reminded}** membre(s)."
     try:
         await interaction.response.send_message(msg, ephemeral=True)
@@ -248,6 +250,7 @@ async def update_classement():
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(CLASSEMENT_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
+
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -265,6 +268,7 @@ async def update_classement():
                     ORDER BY total_points DESC
                 """, (week_start,))
                 data = c.fetchall()
+
         embed = discord.Embed(title="🏆 Classement par Points", color=discord.Color.gold())
         if data:
             desc = "\n".join([f"**{i}.** {user} → **{pts:.1f}** points" for i, (user, pts) in enumerate(data, 1)])
@@ -282,6 +286,7 @@ async def update_quotas_tableau():
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(QUOTAS_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
+
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -290,19 +295,30 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Contenair' THEN q.quantity ELSE 0 END), 0) as contenair,
                         COALESCE(SUM(CASE WHEN q.type = 'Atm' THEN q.quantity ELSE 0 END), 0) as atm,
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
-                        COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo,
-                        STRING_AGG(DISTINCT q.subtype, ', ') as speedo_types
+                        COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo_total,
+                        STRING_AGG(
+                            CASE 
+                                WHEN q.type = 'Speedo' AND q.subtype IS NOT NULL 
+                                THEN q.subtype || ' (' || SUM(q.quantity)::TEXT || ')'
+                                ELSE NULL 
+                            END, 
+                            ', '
+                        ) as speedo_details
                     FROM authorized_users a
-                    LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
+                    LEFT JOIN quotas q 
+                        ON a.user_id = q.user_id 
+                       AND q.week_start = %s
                     GROUP BY a.user_id, a.username
                     ORDER BY (COALESCE(SUM(q.quantity),0)) DESC, a.username
                 """, (week_start,))
                 data = c.fetchall()
+
         embed = discord.Embed(title="📋 Progression des Quotas", color=discord.Color.blue())
         obj_str = "**Objectifs Hebdomadaires :**\n"
         for t, nb in OBJECTIFS.items():
             obj_str += f"• {t} → **{nb}**\n"
         obj_str += "\n"
+
         if data:
             desc = obj_str
             for row in data:
@@ -311,17 +327,21 @@ async def update_quotas_tableau():
                 a = row[2]
                 s = row[3]
                 sp = row[4]
-                speedo_types = row[5] or "Aucun"
+                speedo_details = row[5] or "Aucun"
+
                 desc += f"**{username}**\n"
                 desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
                 desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
                 desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}** | "
-                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}** ({speedo_types})\n\n"
+                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}** ({speedo_details})\n\n"
+            
             embed.description = desc
         else:
             embed.description = obj_str + "Aucun membre autorisé."
+
         embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
+
     except Exception as e:
         print(f"Erreur tableau quotas: {e}")
 
@@ -335,12 +355,15 @@ async def auto_update():
 async def settableaux(ctx):
     global TABLEAU_CHANNEL_ID, CLASSEMENT_MESSAGE_ID, QUOTAS_MESSAGE_ID
     TABLEAU_CHANNEL_ID = ctx.channel.id
+
     embed1 = discord.Embed(title="🏆 Classement par Points", description="En attente...", color=discord.Color.gold())
     msg1 = await ctx.send(embed=embed1)
     CLASSEMENT_MESSAGE_ID = msg1.id
+
     embed2 = discord.Embed(title="📋 Progression des Quotas", description="Chargement...", color=discord.Color.blue())
     msg2 = await ctx.send(embed=embed2)
     QUOTAS_MESSAGE_ID = msg2.id
+
     await ctx.send("✅ **Deux tableaux créés !**")
 
 @bot.command()
