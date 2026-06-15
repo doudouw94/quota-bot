@@ -1,5 +1,4 @@
-✅ Code corrigé définitivement (le problème d'interaction est résolu) :
-Remplace tout ton fichier par celui-ci :
+✅ Voici le code complet et propre (sans aucun texte en trop) :
 Pythonimport discord
 from discord.ext import commands, tasks
 import psycopg2
@@ -101,7 +100,6 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, subtype, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -170,9 +168,9 @@ class SpeedoSubtypeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         subtype = self.values[0]
+        await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+        
         try:
-            await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
             if qty <= 0: raise ValueError
@@ -192,7 +190,6 @@ class SpeedoSubtypeSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, subtype, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
