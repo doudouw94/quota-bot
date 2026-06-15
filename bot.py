@@ -297,18 +297,20 @@ async def update_quotas_tableau():
                             ', '
                         ) FILTER (WHERE q.subtype IS NOT NULL) as speedo_details
                     FROM authorized_users a
+                    LEFT JOIN quotas q 
+                        ON a.user_id = q.user_id 
+                       AND q.week_start = %s
                     LEFT JOIN (
                         SELECT 
                             user_id,
                             subtype,
                             SUM(quantity) as speedo_qty
-                        FROM quotas
+                        FROM quotas 
                         WHERE type = 'Speedo' AND week_start = %s
                         GROUP BY user_id, subtype
-                    ) q ON a.user_id = q.user_id
-                    LEFT JOIN quotas q2 ON a.user_id = q2.user_id AND q2.week_start = %s
+                    ) sq ON a.user_id = sq.user_id AND q.subtype = sq.subtype
                     GROUP BY a.user_id, a.username
-                    ORDER BY COALESCE(SUM(q2.quantity), 0) DESC, a.username
+                    ORDER BY COALESCE(SUM(q.quantity), 0) DESC, a.username
                 """, (week_start, week_start))
                 data = c.fetchall()
 
