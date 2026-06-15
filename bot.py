@@ -78,7 +78,8 @@ class QuotaSelect(discord.ui.Select):
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
-            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+            # On utilise response au lieu de followup pour éviter l'erreur
+            await interaction.response.send_message(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
             
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
@@ -113,7 +114,7 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
             
-            # Suppression automatique
+            # Suppression des messages temporaires
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
