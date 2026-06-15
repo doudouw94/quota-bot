@@ -1,6 +1,4 @@
-✅ OK, je simplifie à fond pour que ça marche sans erreur.
-Remplace tout ton fichier par ce code (version stable) :
-Pythonimport discord
+import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
