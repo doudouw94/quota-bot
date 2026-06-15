@@ -45,6 +45,8 @@ def migrate_database():
                     submitted_at TIMESTAMP DEFAULT NOW()
                 );
             ''')
+            c.execute("ALTER TABLE quotas ADD COLUMN IF NOT EXISTS subtype TEXT;")
+            
             c.execute('''
                 CREATE TABLE IF NOT EXISTS authorized_users (
                     user_id BIGINT PRIMARY KEY,
@@ -77,7 +79,7 @@ class QuotaSelect(discord.ui.Select):
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
-            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\n\nCombien en as-tu fait ?", ephemeral=True)
             
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
@@ -161,46 +163,8 @@ class SpeedoSubtypeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         subtype = self.values[0]
-        # Réponse directe pour éviter l'erreur webhook
-        await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-        
-        try:
-            msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
-            qty = int(msg_nombre.content.strip())
-            if qty <= 0: raise ValueError
-
-            await interaction.followup.send("📸 Envoie ta photo maintenant", ephemeral=True)
-            photo_msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user and m.attachments, timeout=120)
-
-            today = date.today()
-            week_start = today - timedelta(days=today.weekday())
-            image_url = photo_msg.attachments[0].url
-
-            with get_db() as conn:
-                with conn.cursor() as c:
-                    c.execute("""
-                        INSERT INTO quotas (week_start, user_id, username, type, subtype, quantity, image_url)
-                        VALUES (%s, %s, %s, 'Speedo', %s, %s, %s)
-                    """, (week_start, interaction.user.id, interaction.user.display_name, subtype, qty, image_url))
-                    conn.commit()
-
-            log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel:
-                file = await photo_msg.attachments[0].to_file()
-                embed = discord.Embed(title="📸 Quota Soumis", color=discord.Color.green())
-                embed.add_field(name="Membre", value=interaction.user.mention, inline=False)
-                embed.add_field(name="Type", value="Speedo", inline=True)
-                embed.add_field(name="Sous-type", value=subtype, inline=True)
-                embed.add_field(name="Quantité", value=qty, inline=True)
-                await log_channel.send(embed=embed, file=file)
-
-            await interaction.followup.send("✅ **Speedo enregistré avec succès !**", ephemeral=True)
-            await asyncio.sleep(2)
-            await update_tableaux()
-
-        except Exception as e:
-            await interaction.followup.send("❌ Erreur.", ephemeral=True)
-            print(e)
+        quota_select = QuotaSelect()
+        await quota_select.ask_quantity(interaction, "Speedo", subtype)
 
 # ==================== FONCTIONS ====================
 async def do_rappel(interaction: discord.Interaction):
