@@ -1,4 +1,6 @@
-import discord
+✅ Code corrigé définitivement (le problème d'interaction est résolu) :
+Remplace tout ton fichier par celui-ci :
+Pythonimport discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
@@ -99,6 +101,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, subtype, qty, image_url))
                     conn.commit()
 
+            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -167,8 +170,52 @@ class SpeedoSubtypeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         subtype = self.values[0]
-        quota_select = QuotaSelect()
-        await quota_select.ask_quantity(interaction, "Speedo", subtype)
+        try:
+            await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+
+            msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
+            qty = int(msg_nombre.content.strip())
+            if qty <= 0: raise ValueError
+
+            await interaction.followup.send("📸 Envoie ta photo maintenant", ephemeral=True)
+            photo_msg = await bot.wait_for('message', check=lambda m: m.author == interaction.user and m.attachments, timeout=120)
+
+            today = date.today()
+            week_start = today - timedelta(days=today.weekday())
+            image_url = photo_msg.attachments[0].url
+
+            with get_db() as conn:
+                with conn.cursor() as c:
+                    c.execute("""
+                        INSERT INTO quotas (week_start, user_id, username, type, subtype, quantity, image_url)
+                        VALUES (%s, %s, %s, 'Speedo', %s, %s, %s)
+                    """, (week_start, interaction.user.id, interaction.user.display_name, subtype, qty, image_url))
+                    conn.commit()
+
+            # Log
+            log_channel = bot.get_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                file = await photo_msg.attachments[0].to_file()
+                embed = discord.Embed(title="📸 Quota Soumis", color=discord.Color.green())
+                embed.add_field(name="Membre", value=interaction.user.mention, inline=False)
+                embed.add_field(name="Type", value="Speedo", inline=True)
+                embed.add_field(name="Sous-type", value=subtype, inline=True)
+                embed.add_field(name="Quantité", value=qty, inline=True)
+                await log_channel.send(embed=embed, file=file)
+
+            await interaction.followup.send("✅ **Speedo enregistré avec succès !**", ephemeral=True)
+            
+            await asyncio.sleep(2)
+            try: await msg_nombre.delete()
+            except: pass
+            try: await photo_msg.delete()
+            except: pass
+
+            await update_tableaux()
+
+        except Exception as e:
+            await interaction.followup.send("❌ Erreur.", ephemeral=True)
+            print(e)
 
 # ==================== FONCTIONS ====================
 async def do_rappel(interaction: discord.Interaction):
@@ -248,7 +295,7 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Atm' THEN q.quantity ELSE 0 END), 0) as atm,
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
                         COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo,
-                        STRING_AGG(DISTINCT q.subtype || ' x' || SUM(q.quantity) FILTER (WHERE q.type = 'Speedo'), ', ') as speedo_detail
+                        STRING_AGG(DISTINCT q.subtype || ' x' || q.quantity, ', ') FILTER (WHERE q.type = 'Speedo') as speedo_detail
                     FROM authorized_users a
                     LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
                     GROUP BY a.user_id, a.username
