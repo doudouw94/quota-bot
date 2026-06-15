@@ -58,6 +58,7 @@ def migrate_database():
 migrate_database()
 
 # ==================== VIEWS ====================
+# (Je garde exactement tes views sans changement)
 class QuotaSelect(discord.ui.Select):
     def __init__(self):
         options = [
