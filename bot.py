@@ -1,4 +1,4 @@
-✅ Voici le code complet et propre (sans aucun texte en trop) :
+✅ Voici le code PUR (sans aucun texte en trop). Copie tout à partir de import jusqu'à la fin.
 Pythonimport discord
 from discord.ext import commands, tasks
 import psycopg2
@@ -292,7 +292,7 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Atm' THEN q.quantity ELSE 0 END), 0) as atm,
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
                         COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo,
-                        STRING_AGG(DISTINCT q.subtype || ' x' || q.quantity, ', ') FILTER (WHERE q.type = 'Speedo') as speedo_detail
+                        STRING_AGG(DISTINCT q.subtype || ' x' || SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END) FILTER (WHERE q.type = 'Speedo'), ', ') as speedo_detail
                     FROM authorized_users a
                     LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
                     GROUP BY a.user_id, a.username
