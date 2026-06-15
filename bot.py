@@ -70,7 +70,6 @@ class QuotaSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         type_quota = self.values[0]
-      
         if type_quota == "Speedo":
             await interaction.response.send_message(view=SpeedoSubtypeView(), ephemeral=True)
         else:
@@ -79,7 +78,6 @@ class QuotaSelect(discord.ui.Select):
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
             await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-          
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
             if qty <= 0: raise ValueError
@@ -99,7 +97,6 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, subtype, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -189,7 +186,6 @@ class SpeedoSubtypeSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, subtype, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -297,20 +293,23 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
                         COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo_total,
                         STRING_AGG(
-                            CASE 
-                                WHEN q.type = 'Speedo' AND q.subtype IS NOT NULL 
-                                THEN q.subtype || ' (' || SUM(q.quantity)::TEXT || ')'
-                                ELSE NULL 
-                            END, 
+                            q.subtype || ' (' || q.speedo_qty::TEXT || ')', 
                             ', '
-                        ) as speedo_details
+                        ) FILTER (WHERE q.subtype IS NOT NULL) as speedo_details
                     FROM authorized_users a
-                    LEFT JOIN quotas q 
-                        ON a.user_id = q.user_id 
-                       AND q.week_start = %s
+                    LEFT JOIN (
+                        SELECT 
+                            user_id,
+                            subtype,
+                            SUM(quantity) as speedo_qty
+                        FROM quotas
+                        WHERE type = 'Speedo' AND week_start = %s
+                        GROUP BY user_id, subtype
+                    ) q ON a.user_id = q.user_id
+                    LEFT JOIN quotas q2 ON a.user_id = q2.user_id AND q2.week_start = %s
                     GROUP BY a.user_id, a.username
-                    ORDER BY (COALESCE(SUM(q.quantity),0)) DESC, a.username
-                """, (week_start,))
+                    ORDER BY COALESCE(SUM(q2.quantity), 0) DESC, a.username
+                """, (week_start, week_start))
                 data = c.fetchall()
 
         embed = discord.Embed(title="📋 Progression des Quotas", color=discord.Color.blue())
