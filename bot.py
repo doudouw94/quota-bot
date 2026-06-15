@@ -113,6 +113,10 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
             await asyncio.sleep(2)
+            try: await msg_nombre.delete()
+            except: pass
+            try: await photo_msg.delete()
+            except: pass
             await update_tableaux()
 
         except Exception as e:
@@ -162,10 +166,6 @@ class SpeedoSubtypeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         subtype = self.values[0]
-        # Réponse directe pour éviter l'erreur
-        await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-        
-        # On appelle directement ask_quantity
         quota_select = QuotaSelect()
         await quota_select.ask_quantity(interaction, "Speedo", subtype)
 
@@ -246,7 +246,8 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Contenair' THEN q.quantity ELSE 0 END), 0) as contenair,
                         COALESCE(SUM(CASE WHEN q.type = 'Atm' THEN q.quantity ELSE 0 END), 0) as atm,
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
-                        COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo
+                        COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo,
+                        STRING_AGG(DISTINCT q.subtype, ', ') as speedo_types
                     FROM authorized_users a
                     LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
                     GROUP BY a.user_id, a.username
@@ -266,11 +267,12 @@ async def update_quotas_tableau():
                 a = row[2]
                 s = row[3]
                 sp = row[4]
+                speedo_types = row[5] or "Aucun"
                 desc += f"**{username}**\n"
                 desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
                 desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
                 desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}** | "
-                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}**\n\n"
+                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}** ({speedo_types})\n\n"
             embed.description = desc
         else:
             embed.description = obj_str + "Aucun membre autorisé."
