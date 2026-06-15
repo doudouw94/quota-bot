@@ -58,6 +58,7 @@ def migrate_database():
 migrate_database()
 
 # ==================== VIEWS ====================
+# (Les classes View restent identiques, je ne les recopie pas pour gagner de la place)
 class QuotaSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -109,7 +110,6 @@ class QuotaSelect(discord.ui.Select):
                 await log_channel.send(embed=embed, file=file)
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
-          
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
@@ -197,7 +197,6 @@ class SpeedoSubtypeSelect(discord.ui.Select):
                 await log_channel.send(embed=embed, file=file)
 
             await interaction.followup.send("✅ **Speedo enregistré avec succès !**", ephemeral=True)
-           
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
@@ -293,9 +292,9 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
                         COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo_total,
                         STRING_AGG(
-                            q.subtype || ' (' || q.speedo_qty::TEXT || ')', 
+                            sq.subtype || ' (' || sq.speedo_qty::TEXT || ')', 
                             ', '
-                        ) FILTER (WHERE q.subtype IS NOT NULL) as speedo_details
+                        ) FILTER (WHERE sq.subtype IS NOT NULL) as speedo_details
                     FROM authorized_users a
                     LEFT JOIN quotas q 
                         ON a.user_id = q.user_id 
@@ -308,7 +307,7 @@ async def update_quotas_tableau():
                         FROM quotas 
                         WHERE type = 'Speedo' AND week_start = %s
                         GROUP BY user_id, subtype
-                    ) sq ON a.user_id = sq.user_id AND q.subtype = sq.subtype
+                    ) sq ON a.user_id = sq.user_id
                     GROUP BY a.user_id, a.username
                     ORDER BY COALESCE(SUM(q.quantity), 0) DESC, a.username
                 """, (week_start, week_start))
