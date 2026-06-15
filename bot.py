@@ -46,7 +46,6 @@ def migrate_database():
                 );
             ''')
             c.execute("ALTER TABLE quotas ADD COLUMN IF NOT EXISTS subtype TEXT;")
-            
             c.execute('''
                 CREATE TABLE IF NOT EXISTS authorized_users (
                     user_id BIGINT PRIMARY KEY,
@@ -79,7 +78,7 @@ class QuotaSelect(discord.ui.Select):
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
-            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\n\nCombien en as-tu fait ?", ephemeral=True)
+            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
             
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
