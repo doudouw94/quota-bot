@@ -291,7 +291,7 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Atm' THEN q.quantity ELSE 0 END), 0) as atm,
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
                         COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo,
-                        STRING_AGG(DISTINCT q.subtype || ' x' || SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END) FILTER (WHERE q.type = 'Speedo'), ', ') as speedo_detail
+                        STRING_AGG(DISTINCT q.subtype, ', ') as speedo_types
                     FROM authorized_users a
                     LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
                     GROUP BY a.user_id, a.username
@@ -311,12 +311,12 @@ async def update_quotas_tableau():
                 a = row[2]
                 s = row[3]
                 sp = row[4]
-                speedo_detail = row[5] or "Aucun"
+                speedo_types = row[5] or "Aucun"
                 desc += f"**{username}**\n"
                 desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
                 desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
                 desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}** | "
-                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}** ({speedo_detail})\n\n"
+                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}** ({speedo_types})\n\n"
             embed.description = desc
         else:
             embed.description = obj_str + "Aucun membre autorisé."
