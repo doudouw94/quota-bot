@@ -162,6 +162,10 @@ class SpeedoSubtypeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         subtype = self.values[0]
+        # Réponse directe pour éviter l'erreur
+        await interaction.response.send_message(f"**Speedo - {subtype}** sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+        
+        # On appelle directement ask_quantity
         quota_select = QuotaSelect()
         await quota_select.ask_quantity(interaction, "Speedo", subtype)
 
