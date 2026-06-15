@@ -70,6 +70,7 @@ class QuotaSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         type_quota = self.values[0]
+       
         if type_quota == "Speedo":
             await interaction.response.send_message(view=SpeedoSubtypeView(), ephemeral=True)
         else:
@@ -78,7 +79,7 @@ class QuotaSelect(discord.ui.Select):
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
             await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
-            
+           
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
             if qty <= 0: raise ValueError
@@ -98,6 +99,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, subtype, qty, image_url))
                     conn.commit()
 
+            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -110,7 +112,8 @@ class QuotaSelect(discord.ui.Select):
                 await log_channel.send(embed=embed, file=file)
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
-            
+           
+            # Suppression des messages temporaires
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
