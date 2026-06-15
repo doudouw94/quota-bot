@@ -70,7 +70,6 @@ class QuotaSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         type_quota = self.values[0]
-        
         if type_quota == "Speedo":
             await interaction.response.send_message(view=SpeedoSubtypeView(), ephemeral=True)
         else:
@@ -78,8 +77,7 @@ class QuotaSelect(discord.ui.Select):
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
         try:
-            # On utilise response au lieu de followup pour éviter l'erreur
-            await interaction.response.send_message(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
+            await interaction.followup.send(f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\nCombien en as-tu fait ?", ephemeral=True)
             
             msg_nombre = await bot.wait_for('message', check=lambda m: m.author == interaction.user, timeout=60)
             qty = int(msg_nombre.content.strip())
@@ -100,7 +98,6 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, subtype, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -114,7 +111,6 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
             
-            # Suppression des messages temporaires
             await asyncio.sleep(2)
             try: await msg_nombre.delete()
             except: pass
@@ -250,7 +246,8 @@ async def update_quotas_tableau():
                         COALESCE(SUM(CASE WHEN q.type = 'Contenair' THEN q.quantity ELSE 0 END), 0) as contenair,
                         COALESCE(SUM(CASE WHEN q.type = 'Atm' THEN q.quantity ELSE 0 END), 0) as atm,
                         COALESCE(SUM(CASE WHEN q.type = 'Superette' THEN q.quantity ELSE 0 END), 0) as superette,
-                        COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo
+                        COALESCE(SUM(CASE WHEN q.type = 'Speedo' THEN q.quantity ELSE 0 END), 0) as speedo,
+                        STRING_AGG(DISTINCT q.subtype, ', ') FILTER (WHERE q.subtype IS NOT NULL) as speedo_types
                     FROM authorized_users a
                     LEFT JOIN quotas q ON a.user_id = q.user_id AND q.week_start = %s
                     GROUP BY a.user_id, a.username
@@ -270,11 +267,12 @@ async def update_quotas_tableau():
                 a = row[2]
                 s = row[3]
                 sp = row[4]
+                speedo_types = row[5] or "Aucun"
                 desc += f"**{username}**\n"
                 desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
                 desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
                 desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}** | "
-                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}**\n\n"
+                desc += f"⚡ Speedo : **{sp}/{OBJECTIFS['Speedo']}** ({speedo_types})\n\n"
             embed.description = desc
         else:
             embed.description = obj_str + "Aucun membre autorisé."
