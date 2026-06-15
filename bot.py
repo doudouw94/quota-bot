@@ -1,5 +1,4 @@
-✅ Voici le code PUR (sans aucun texte en trop). Copie tout à partir de import jusqu'à la fin.
-Pythonimport discord
+import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
