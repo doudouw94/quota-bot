@@ -84,6 +84,8 @@ class QuotaSelect(discord.ui.Select):
             await self.ask_quantity(interaction, type_quota)
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str, subtype: str = None):
+        msg_nombre = None
+        photo_msg = None
         try:
             await interaction.followup.send(
                 f"**{type_quota}**{' - ' + subtype if subtype else ''} sélectionné.\n"
@@ -112,7 +114,7 @@ class QuotaSelect(discord.ui.Select):
                 timeout=150
             )
 
-            await self.process_quota(interaction, type_quota, subtype, qty, photo_msg)
+            await self.process_quota(interaction, type_quota, subtype, qty, photo_msg, msg_nombre)
 
         except asyncio.TimeoutError:
             await interaction.followup.send("⏰ Temps écoulé. Recommence la procédure.", ephemeral=True)
@@ -124,8 +126,17 @@ class QuotaSelect(discord.ui.Select):
                 await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
             except:
                 pass
+        finally:
+            # Nettoyage des messages
+            await asyncio.sleep(2)
+            for msg in (msg_nombre, photo_msg):
+                if msg is not None:
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
 
-    async def process_quota(self, interaction: discord.Interaction, type_quota: str, subtype: str, qty: int, photo_msg):
+    async def process_quota(self, interaction: discord.Interaction, type_quota: str, subtype: str, qty: int, photo_msg, msg_nombre=None):
         try:
             today = date.today()
             week_start = today - timedelta(days=today.weekday())
@@ -140,7 +151,7 @@ class QuotaSelect(discord.ui.Select):
                           type_quota, subtype, qty, image_url))
                     conn.commit()
 
-            # Log
+            # Log dans le canal
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -154,16 +165,6 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
 
-            # Nettoyage messages
-            await asyncio.sleep(2)
-            for msg in (msg_nombre, photo_msg):
-                try:
-                    await msg.delete()
-                except:
-                    pass
-
-            await update_tableaux()
-
         except Exception as e:
             print(f"Erreur process_quota: {e}")
             try:
@@ -174,7 +175,7 @@ class QuotaSelect(discord.ui.Select):
 
 class QuotaSelectView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=300)  # 5 minutes
+        super().__init__(timeout=300)
         self.add_item(QuotaSelect())
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
@@ -213,7 +214,6 @@ class SpeedoSubtypeSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         subtype = self.values[0]
-        # On réutilise la méthode ask_quantity de QuotaSelect
         select = QuotaSelect()
         await select.ask_quantity(interaction, "Speedo", subtype)
 
@@ -240,10 +240,7 @@ class QuotaView(discord.ui.View):
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
         print(f"Erreur QuotaView: {error}")
-        try:
-            await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
-        except:
-            pass
+
 
 # ==================== FONCTIONS ====================
 
