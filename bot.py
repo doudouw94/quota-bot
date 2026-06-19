@@ -110,16 +110,20 @@ class QuotaSelect(discord.ui.Select):
                 check=lambda m: m.author == interaction.user and m.channel == interaction.channel,
                 timeout=90
             )
+
             qty = int(msg_nombre.content.strip())
             if qty <= 0:
                 raise ValueError
+
             await interaction.followup.send("📸 Envoie ta photo maintenant", ephemeral=True)
             photo_msg = await bot.wait_for(
                 'message',
                 check=lambda m: m.author == interaction.user and m.attachments and m.channel == interaction.channel,
                 timeout=150
             )
-            await self.process_quota(interaction, type_quota, qty, photo_msg)
+
+            await self.process_quota(interaction, type_quota, qty, photo_msg, msg_nombre)
+
         except asyncio.TimeoutError:
             await interaction.followup.send("⏰ Temps écoulé.", ephemeral=True)
         except ValueError:
@@ -128,10 +132,11 @@ class QuotaSelect(discord.ui.Select):
             print(e)
             await interaction.followup.send("❌ Erreur.", ephemeral=True)
 
-    async def process_quota(self, interaction: discord.Interaction, type_quota: str, qty: int, photo_msg):
+    async def process_quota(self, interaction: discord.Interaction, type_quota: str, qty: int, photo_msg, msg_nombre=None):
         try:
             week_start = date.today() - timedelta(days=date.today().weekday())
             image_url = photo_msg.attachments[0].url
+
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("""
@@ -140,6 +145,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
+            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -150,14 +156,27 @@ class QuotaSelect(discord.ui.Select):
                 await log_channel.send(embed=embed, file=file)
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
+
+            # ====================== SUPPRESSION AUTOMATIQUE ======================
+            try:
+                if msg_nombre:
+                    await msg_nombre.delete()
+                await photo_msg.delete()
+            except discord.NotFound:
+                pass  # Message déjà supprimé
+            except Exception as e:
+                print(f"Erreur suppression messages: {e}")
+
         except Exception as e:
             print(e)
             await interaction.followup.send("❌ Erreur d'enregistrement.", ephemeral=True)
+
 
 class QuotaSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
         self.add_item(QuotaSelect())
+
 
 class QuotaView(discord.ui.View):
     def __init__(self):
@@ -175,14 +194,18 @@ class QuotaView(discord.ui.View):
         for t, nb in OBJECTIFS.items():
             objectifs_text += f"• **{t}** → **{nb}**\n"
 
-        await interaction.response.send_message(objectifs_text + "\nChoisis ton quota :",
-                                              view=QuotaSelectView(), ephemeral=True)
+        await interaction.response.send_message(
+            objectifs_text + "\nChoisis ton quota :",
+            view=QuotaSelectView(),
+            ephemeral=True
+        )
 
     @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red)
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
         await do_rappel(interaction)
+
 
 # ==================== FONCTIONS ====================
 async def do_rappel(interaction: discord.Interaction):
@@ -206,18 +229,20 @@ async def do_rappel(interaction: discord.Interaction):
                     pass
     await interaction.followup.send(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
 
+
 async def update_tableaux():
     await update_classement()
     await update_quotas_tableau()
 
+
 async def update_classement():
-    if not CLASSEMENT_MESSAGE_ID: 
+    if not CLASSEMENT_MESSAGE_ID:
         return
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(CLASSEMENT_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
-        
+       
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -237,7 +262,6 @@ async def update_classement():
                 data = c.fetchall()
 
         embed = discord.Embed(title="🏆 Classement par Points", color=discord.Color.gold())
-
         if data:
             desc = ""
             for i, (user, pts) in enumerate(data, 1):
@@ -246,21 +270,20 @@ async def update_classement():
             embed.description = desc
         else:
             embed.description = "Aucun quota enregistré cette semaine."
-
         embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
-
     except Exception as e:
         print(f"Erreur classement: {e}")
 
+
 async def update_quotas_tableau():
-    if not QUOTAS_MESSAGE_ID: 
+    if not QUOTAS_MESSAGE_ID:
         return
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(QUOTAS_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
-        
+       
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -288,7 +311,7 @@ async def update_quotas_tableau():
             a = row[2] or 0
             s = row[3] or 0
             cam = row[4] or 0
-            
+           
             desc += f"**{username}**\n"
             desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
             desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
@@ -301,12 +324,13 @@ async def update_quotas_tableau():
     except Exception as e:
         print(f"Erreur tableau quotas: {e}")
 
+
 # ==================== RESET QUOTAS ====================
 @bot.command(name="resetquotas", aliases=["resetquota", "reset"])
 @commands.has_permissions(administrator=True)
 async def reset_quotas(ctx, confirm: str = None):
     week_start = date.today() - timedelta(days=date.today().weekday())
-    
+   
     if confirm != "confirm":
         embed = discord.Embed(
             title="⚠️ Confirmation requise",
@@ -322,13 +346,12 @@ async def reset_quotas(ctx, confirm: str = None):
                 c.execute("DELETE FROM quotas WHERE week_start = %s", (week_start,))
                 deleted = c.rowcount
                 conn.commit()
-
         await ctx.send(f"✅ **{deleted}** quotas ont été supprimés pour la semaine du **{week_start}**.")
         await update_tableaux()
-
     except Exception as e:
         print(e)
         await ctx.send("❌ Erreur lors de la réinitialisation.")
+
 
 # ==================== COMMANDES ADMIN ====================
 @bot.command()
@@ -337,6 +360,7 @@ async def cleanchannel(ctx):
     await ctx.send("🔄 Nettoyage en cours...")
     await clean_channel_access()
     await ctx.send("✅ Nettoyage terminé !")
+
 
 @bot.command(name="listusers", aliases=["authorized", "users", "liste"])
 @commands.has_permissions(administrator=True)
@@ -352,6 +376,7 @@ async def list_authorized(ctx):
     embed.description = desc
     await ctx.send(embed=embed)
 
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def adduser(ctx, member: discord.Member):
@@ -362,6 +387,7 @@ async def adduser(ctx, member: discord.Member):
             conn.commit()
     await ctx.send(f"✅ **{member.display_name}** ajouté.")
 
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def removeuser(ctx, member: discord.Member):
@@ -371,6 +397,7 @@ async def removeuser(ctx, member: discord.Member):
             conn.commit()
     await ctx.send(f"✅ **{member.display_name}** retiré.")
 
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def settableaux(ctx):
@@ -379,11 +406,14 @@ async def settableaux(ctx):
     embed1 = discord.Embed(title="🏆 Classement par Points", description="En attente...", color=discord.Color.gold())
     msg1 = await ctx.send(embed=embed1)
     CLASSEMENT_MESSAGE_ID = msg1.id
+
     embed2 = discord.Embed(title="📋 Progression des Quotas", description="Chargement...", color=discord.Color.blue())
     msg2 = await ctx.send(embed=embed2)
     QUOTAS_MESSAGE_ID = msg2.id
+
     await ctx.send("✅ **Tableaux créés !**")
     await update_tableaux()
+
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -392,6 +422,7 @@ async def setup(ctx):
                          description="Clique sur le bouton ci-dessous pour faire ton quota.",
                          color=discord.Color.blue())
     await ctx.send(embed=embed, view=QuotaView())
+
 
 # ==================== EVENTS & TASKS ====================
 @bot.event
@@ -402,9 +433,11 @@ async def on_ready():
     if not auto_clean.is_running():
         auto_clean.start()
 
+
 @tasks.loop(minutes=2)
 async def auto_update():
     await update_tableaux()
+
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
