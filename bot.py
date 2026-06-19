@@ -140,7 +140,6 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -212,11 +211,13 @@ async def update_tableaux():
     await update_quotas_tableau()
 
 async def update_classement():
-    if not CLASSEMENT_MESSAGE_ID: return
+    if not CLASSEMENT_MESSAGE_ID: 
+        return
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(CLASSEMENT_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
+        
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -231,27 +232,35 @@ async def update_classement():
                     FROM quotas
                     WHERE week_start = %s
                     GROUP BY user_id, username
-                    ORDER BY total_points DESC
+                    ORDER BY total_points DESC NULLS LAST
                 """, (week_start,))
                 data = c.fetchall()
 
         embed = discord.Embed(title="🏆 Classement par Points", color=discord.Color.gold())
+
         if data:
-            desc = "\n".join([f"**{i}.** {user} → **{pts:.1f}** pts" for i, (user, pts) in enumerate(data, 1)])
+            desc = ""
+            for i, (user, pts) in enumerate(data, 1):
+                points = float(pts) if pts is not None else 0.0
+                desc += f"**{i}.** {user} → **{points:.1f}** pts\n"
             embed.description = desc
         else:
             embed.description = "Aucun quota enregistré cette semaine."
+
         embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
+
     except Exception as e:
         print(f"Erreur classement: {e}")
 
 async def update_quotas_tableau():
-    if not QUOTAS_MESSAGE_ID: return
+    if not QUOTAS_MESSAGE_ID: 
+        return
     try:
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(QUOTAS_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
+        
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -272,17 +281,20 @@ async def update_quotas_tableau():
         for t, nb in OBJECTIFS.items():
             desc += f"• {t} → **{nb}**\n"
         desc += "\n"
+
         for row in data:
             username = row[0]
-            c = row[1]
-            a = row[2]
-            s = row[3]
-            cam = row[4]
+            c = row[1] or 0
+            a = row[2] or 0
+            s = row[3] or 0
+            cam = row[4] or 0
+            
             desc += f"**{username}**\n"
             desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
             desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
             desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}** | "
             desc += f"🏠 Cambriolage : **{cam}/{OBJECTIFS['Cambriolage']}**\n\n"
+
         embed.description = desc
         embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
@@ -293,7 +305,6 @@ async def update_quotas_tableau():
 @bot.command(name="resetquotas", aliases=["resetquota", "reset"])
 @commands.has_permissions(administrator=True)
 async def reset_quotas(ctx, confirm: str = None):
-    """Réinitialise tous les quotas de la semaine en cours"""
     week_start = date.today() - timedelta(days=date.today().weekday())
     
     if confirm != "confirm":
