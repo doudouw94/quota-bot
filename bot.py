@@ -104,9 +104,11 @@ class QuotaSelect(discord.ui.Select):
         await self.ask_quantity(interaction, type_quota)
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str):
+        msg_nombre = None
+        photo_msg = None
         try:
             await interaction.followup.send(
-                f"**{type_quota}** sélectionné.\n**Combien en as-tu fait ?** (réponds avec un nombre)",
+                f"**{type_quota}** sélectionné.\n**Combien en as-tu fait ?** (réponds uniquement avec un nombre)",
                 ephemeral=True
             )
             msg_nombre = await bot.wait_for(
@@ -118,23 +120,33 @@ class QuotaSelect(discord.ui.Select):
             if qty <= 0:
                 raise ValueError
 
-            await interaction.followup.send("📸 Envoie ta photo maintenant", ephemeral=True)
+            await interaction.followup.send("📸 Envoie ta photo maintenant (avec pièce jointe)", ephemeral=True)
             photo_msg = await bot.wait_for(
                 'message',
                 check=lambda m: m.author == interaction.user and m.attachments and m.channel == interaction.channel,
                 timeout=150
             )
 
-            await self.process_quota(interaction, type_quota, qty, photo_msg)
-        except asyncio.TimeoutError:
-            await interaction.followup.send("⏰ Temps écoulé.", ephemeral=True)
-        except ValueError:
-            await interaction.followup.send("❌ Nombre invalide.", ephemeral=True)
-        except Exception as e:
-            print(e)
-            await interaction.followup.send("❌ Erreur.", ephemeral=True)
+            await self.process_quota(interaction, type_quota, qty, photo_msg, msg_nombre)
 
-    async def process_quota(self, interaction: discord.Interaction, type_quota: str, qty: int, photo_msg):
+        except asyncio.TimeoutError:
+            await interaction.followup.send("⏰ Temps écoulé. Recommence.", ephemeral=True)
+        except ValueError:
+            await interaction.followup.send("❌ Merci d'envoyer un nombre valide positif.", ephemeral=True)
+        except Exception as e:
+            print(f"Erreur ask_quantity: {e}")
+            await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+        finally:
+            # Suppression automatique des messages
+            await asyncio.sleep(2)
+            for msg in (msg_nombre, photo_msg):
+                if msg:
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
+
+    async def process_quota(self, interaction: discord.Interaction, type_quota: str, qty: int, photo_msg, msg_nombre=None):
         try:
             week_start = date.today() - timedelta(days=date.today().weekday())
             image_url = photo_msg.attachments[0].url
@@ -147,7 +159,7 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log
+            # Log dans le canal
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -159,8 +171,8 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
         except Exception as e:
-            print(e)
-            await interaction.followup.send("❌ Erreur d'enregistrement.", ephemeral=True)
+            print(f"Erreur process_quota: {e}")
+            await interaction.followup.send("❌ Erreur lors de l'enregistrement.", ephemeral=True)
 
 
 class QuotaSelectView(discord.ui.View):
@@ -181,7 +193,6 @@ class QuotaView(discord.ui.View):
                 if not c.fetchone():
                     return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
 
-        # Affichage clair des objectifs
         objectifs_text = "**Objectifs Hebdomadaires :**\n"
         for t, nb in OBJECTIFS.items():
             objectifs_text += f"• **{t}** → **{nb}**\n"
@@ -236,13 +247,13 @@ async def update_classement():
             with conn.cursor() as c:
                 c.execute("""
                     SELECT username,
-                           SUM(quantity *
+                           COALESCE(SUM(quantity *
                                CASE type
                                    WHEN 'Contenair' THEN 1
                                    WHEN 'Atm' THEN 2.5
                                    WHEN 'Superette' THEN 3
                                    WHEN 'Cambriolage' THEN 10
-                               END) as total_points
+                               END), 0) as total_points
                     FROM quotas
                     WHERE week_start = %s
                     GROUP BY user_id, username
@@ -315,7 +326,6 @@ async def update_quotas_tableau():
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def cleanchannel(ctx):
-    """Nettoie les utilisateurs qui n'ont plus accès au salon"""
     await ctx.send("🔄 Nettoyage en cours...")
     await clean_channel_access()
     await ctx.send("✅ Nettoyage terminé !")
@@ -331,7 +341,7 @@ async def list_authorized(ctx):
 
     if not users:
         return await ctx.send("❌ Aucun utilisateur autorisé.")
-
+    
     embed = discord.Embed(title="👥 Utilisateurs Autorisés", color=discord.Color.green())
     desc = "\n".join([f"• **{u}** (`{uid}`)" for u, uid in users])
     embed.description = desc
