@@ -55,7 +55,7 @@ def migrate_database():
 
 migrate_database()
 
-# ==================== NETTOYAGE AUTOMATIQUE ====================
+# ==================== NETTOYAGE (MANUEL SEULEMENT) ====================
 async def clean_channel_access():
     if not TABLEAU_CHANNEL_ID:
         return
@@ -78,10 +78,6 @@ async def clean_channel_access():
             print(f"✅ {removed} utilisateur(s) retiré(s) automatiquement.")
     except Exception as e:
         print(f"Erreur clean: {e}")
-
-@tasks.loop(hours=6)
-async def auto_clean():
-    await clean_channel_access()
 
 # ==================== VIEWS ====================
 class QuotaSelect(discord.ui.Select):
@@ -110,20 +106,16 @@ class QuotaSelect(discord.ui.Select):
                 check=lambda m: m.author == interaction.user and m.channel == interaction.channel,
                 timeout=90
             )
-
             qty = int(msg_nombre.content.strip())
             if qty <= 0:
                 raise ValueError
-
             await interaction.followup.send("📸 Envoie ta photo maintenant", ephemeral=True)
             photo_msg = await bot.wait_for(
                 'message',
                 check=lambda m: m.author == interaction.user and m.attachments and m.channel == interaction.channel,
                 timeout=150
             )
-
             await self.process_quota(interaction, type_quota, qty, photo_msg, msg_nombre)
-
         except asyncio.TimeoutError:
             await interaction.followup.send("⏰ Temps écoulé.", ephemeral=True)
         except ValueError:
@@ -136,7 +128,6 @@ class QuotaSelect(discord.ui.Select):
         try:
             week_start = date.today() - timedelta(days=date.today().weekday())
             image_url = photo_msg.attachments[0].url
-
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("""
@@ -157,13 +148,13 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
 
-            # ====================== SUPPRESSION AUTOMATIQUE ======================
+            # Suppression des messages
             try:
                 if msg_nombre:
                     await msg_nombre.delete()
                 await photo_msg.delete()
             except discord.NotFound:
-                pass  # Message déjà supprimé
+                pass
             except Exception as e:
                 print(f"Erreur suppression messages: {e}")
 
@@ -171,12 +162,10 @@ class QuotaSelect(discord.ui.Select):
             print(e)
             await interaction.followup.send("❌ Erreur d'enregistrement.", ephemeral=True)
 
-
 class QuotaSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
         self.add_item(QuotaSelect())
-
 
 class QuotaView(discord.ui.View):
     def __init__(self):
@@ -206,7 +195,6 @@ class QuotaView(discord.ui.View):
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
         await do_rappel(interaction)
 
-
 # ==================== FONCTIONS ====================
 async def do_rappel(interaction: discord.Interaction):
     week_start = date.today() - timedelta(days=date.today().weekday())
@@ -229,11 +217,9 @@ async def do_rappel(interaction: discord.Interaction):
                     pass
     await interaction.followup.send(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
 
-
 async def update_tableaux():
     await update_classement()
     await update_quotas_tableau()
-
 
 async def update_classement():
     if not CLASSEMENT_MESSAGE_ID:
@@ -242,7 +228,7 @@ async def update_classement():
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(CLASSEMENT_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
-       
+      
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -275,7 +261,6 @@ async def update_classement():
     except Exception as e:
         print(f"Erreur classement: {e}")
 
-
 async def update_quotas_tableau():
     if not QUOTAS_MESSAGE_ID:
         return
@@ -283,7 +268,7 @@ async def update_quotas_tableau():
         channel = bot.get_channel(TABLEAU_CHANNEL_ID)
         message = await channel.fetch_message(QUOTAS_MESSAGE_ID)
         week_start = date.today() - timedelta(days=date.today().weekday())
-       
+      
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("""
@@ -304,33 +289,30 @@ async def update_quotas_tableau():
         for t, nb in OBJECTIFS.items():
             desc += f"• {t} → **{nb}**\n"
         desc += "\n"
-
         for row in data:
             username = row[0]
             c = row[1] or 0
             a = row[2] or 0
             s = row[3] or 0
             cam = row[4] or 0
-           
+          
             desc += f"**{username}**\n"
             desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
             desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
             desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}** | "
             desc += f"🏠 Cambriolage : **{cam}/{OBJECTIFS['Cambriolage']}**\n\n"
-
         embed.description = desc
         embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
     except Exception as e:
         print(f"Erreur tableau quotas: {e}")
 
-
 # ==================== RESET QUOTAS ====================
 @bot.command(name="resetquotas", aliases=["resetquota", "reset"])
 @commands.has_permissions(administrator=True)
 async def reset_quotas(ctx, confirm: str = None):
     week_start = date.today() - timedelta(days=date.today().weekday())
-   
+  
     if confirm != "confirm":
         embed = discord.Embed(
             title="⚠️ Confirmation requise",
@@ -352,7 +334,6 @@ async def reset_quotas(ctx, confirm: str = None):
         print(e)
         await ctx.send("❌ Erreur lors de la réinitialisation.")
 
-
 # ==================== COMMANDES ADMIN ====================
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -360,7 +341,6 @@ async def cleanchannel(ctx):
     await ctx.send("🔄 Nettoyage en cours...")
     await clean_channel_access()
     await ctx.send("✅ Nettoyage terminé !")
-
 
 @bot.command(name="listusers", aliases=["authorized", "users", "liste"])
 @commands.has_permissions(administrator=True)
@@ -376,7 +356,6 @@ async def list_authorized(ctx):
     embed.description = desc
     await ctx.send(embed=embed)
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def adduser(ctx, member: discord.Member):
@@ -387,7 +366,6 @@ async def adduser(ctx, member: discord.Member):
             conn.commit()
     await ctx.send(f"✅ **{member.display_name}** ajouté.")
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def removeuser(ctx, member: discord.Member):
@@ -397,7 +375,6 @@ async def removeuser(ctx, member: discord.Member):
             conn.commit()
     await ctx.send(f"✅ **{member.display_name}** retiré.")
 
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def settableaux(ctx):
@@ -406,14 +383,11 @@ async def settableaux(ctx):
     embed1 = discord.Embed(title="🏆 Classement par Points", description="En attente...", color=discord.Color.gold())
     msg1 = await ctx.send(embed=embed1)
     CLASSEMENT_MESSAGE_ID = msg1.id
-
     embed2 = discord.Embed(title="📋 Progression des Quotas", description="Chargement...", color=discord.Color.blue())
     msg2 = await ctx.send(embed=embed2)
     QUOTAS_MESSAGE_ID = msg2.id
-
     await ctx.send("✅ **Tableaux créés !**")
     await update_tableaux()
-
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -423,21 +397,17 @@ async def setup(ctx):
                          color=discord.Color.blue())
     await ctx.send(embed=embed, view=QuotaView())
 
-
 # ==================== EVENTS & TASKS ====================
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
     if not auto_update.is_running():
         auto_update.start()
-    if not auto_clean.is_running():
-        auto_clean.start()
-
+    # Auto clean désactivé
 
 @tasks.loop(minutes=2)
 async def auto_update():
     await update_tableaux()
-
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
