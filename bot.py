@@ -236,8 +236,8 @@ async def update_classement():
                            SUM(quantity *
                                CASE type
                                    WHEN 'Contenair' THEN 1
-                                   WHEN 'Atm' THEN 2.5
-                                   WHEN 'Superette' THEN 3
+                                   WHEN 'Atm' THEN 4.5
+                                   WHEN 'Superette' THEN 6
                                    WHEN 'Cambriolage' THEN 10
                                END) as total_points
                     FROM quotas
