@@ -55,7 +55,7 @@ def migrate_database():
 
 migrate_database()
 
-# ==================== NETTOYAGE (MANUEL SEULEMENT) ====================
+# ==================== NETTOYAGE ====================
 async def clean_channel_access():
     if not TABLEAU_CHANNEL_ID:
         return
@@ -136,7 +136,6 @@ class QuotaSelect(discord.ui.Select):
                     """, (week_start, interaction.user.id, interaction.user.display_name, type_quota, qty, image_url))
                     conn.commit()
 
-            # Log
             log_channel = bot.get_channel(LOG_CHANNEL_ID)
             if log_channel:
                 file = await photo_msg.attachments[0].to_file()
@@ -148,15 +147,12 @@ class QuotaSelect(discord.ui.Select):
 
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
 
-            # Suppression des messages
             try:
                 if msg_nombre:
                     await msg_nombre.delete()
                 await photo_msg.delete()
-            except discord.NotFound:
+            except:
                 pass
-            except Exception as e:
-                print(f"Erreur suppression messages: {e}")
 
         except Exception as e:
             print(e)
@@ -375,6 +371,26 @@ async def removeuser(ctx, member: discord.Member):
             conn.commit()
     await ctx.send(f"✅ **{member.display_name}** retiré.")
 
+# ==================== COMMANDE SUPPRIMER PAR ID ====================
+@bot.command(name="removeuserid", aliases=["removeid", "rid"])
+@commands.has_permissions(administrator=True)
+async def remove_user_id(ctx, user_id: int):
+    """Retire un utilisateur avec son ID Discord (marche même s'il a quitté)"""
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
+                deleted = c.rowcount
+                conn.commit()
+
+        if deleted > 0:
+            await ctx.send(f"✅ **Utilisateur avec l'ID `{user_id}`** retiré avec succès.")
+        else:
+            await ctx.send(f"❌ Aucun utilisateur trouvé avec l'ID `{user_id}`.")
+    except Exception as e:
+        print(e)
+        await ctx.send("❌ Erreur lors de la suppression.")
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def settableaux(ctx):
@@ -403,7 +419,6 @@ async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
     if not auto_update.is_running():
         auto_update.start()
-    # Auto clean désactivé
 
 @tasks.loop(minutes=2)
 async def auto_update():
