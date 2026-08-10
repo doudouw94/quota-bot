@@ -135,7 +135,7 @@ class QuotaView(discord.ui.View):
                     return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
         objectifs_text = "**Objectifs Hebdomadaires :**\n"
         for t, nb in OBJECTIFS.items():
-            if t != "Cambriolage":  # on n'affiche plus Cambriolage non plus
+            if t != "Cambriolage":
                 objectifs_text += f"• **{t}** → **{nb}**\n"
         await interaction.response.send_message(objectifs_text + "\nChoisis ton quota :", view=QuotaSelectView(), ephemeral=True)
 
@@ -295,6 +295,40 @@ async def checklastweek(ctx):
             c.execute("SELECT COUNT(*) FROM quotas WHERE week_start = %s", (week_start,))
             count = c.fetchone()[0]
     await ctx.send(f"📊 Semaine dernière ({week_start}) : **{count}** quotas enregistrés.")
+
+@bot.command(name="classementpasse", aliases=["lastclassement", "classementlast"])
+@commands.has_permissions(administrator=True)
+async def classement_passe(ctx):
+    week_start = date.today() - timedelta(days=date.today().weekday() + 7)
+    
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                SELECT username,
+                       SUM(quantity * CASE type
+                           WHEN 'Contenair' THEN 1
+                           WHEN 'Atm' THEN 4.5
+                           WHEN 'Superette' THEN 6
+                           WHEN 'Cambriolage' THEN 10 END) as total_points
+                FROM quotas WHERE week_start = %s
+                GROUP BY user_id, username
+                ORDER BY total_points DESC NULLS LAST
+            """, (week_start,))
+            data = c.fetchall()
+
+    embed = discord.Embed(
+        title=f"🏆 Classement de la semaine passée ({week_start})",
+        color=discord.Color.gold()
+    )
+
+    if data:
+        desc = "\n".join([f"**{i}.** {user} → **{float(pts):.1f}** pts" for i, (user, pts) in enumerate(data, 1)])
+        embed.description = desc
+    else:
+        embed.description = "Aucun quota enregistré la semaine dernière."
+
+    embed.set_footer(text=f"Demandé par {ctx.author.display_name}")
+    await ctx.send(embed=embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
