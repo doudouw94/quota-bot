@@ -108,6 +108,10 @@ class QuotaSelect(discord.ui.Select):
                 embed.add_field(name="Quantité", value=qty, inline=True)
                 await log_channel.send(embed=embed, file=file)
             await interaction.followup.send("✅ **Quota enregistré avec succès !**", ephemeral=True)
+            
+            # Mise à jour immédiate des tableaux
+            await update_tableaux()
+            
             try:
                 if msg_nombre: await msg_nombre.delete()
                 await photo_msg.delete()
@@ -126,9 +130,8 @@ class QuotaView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Faire quota", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Faire quota", style=discord.ButtonStyle.green, custom_id="faire_quota")
     async def faire_quota(self, interaction: discord.Interaction, button):
-        # Répond immédiatement pour éviter le timeout
         await interaction.response.defer(ephemeral=True)
 
         with get_db() as conn:
@@ -144,12 +147,11 @@ class QuotaView(discord.ui.View):
 
         await interaction.followup.send(objectifs_text + "\nChoisis ton quota :", view=QuotaSelectView(), ephemeral=True)
 
-    @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red)
+    @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red, custom_id="rappel_inactifs")
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
 
-        # Répond immédiatement
         await interaction.response.defer(ephemeral=True)
         await do_rappel(interaction)
 
@@ -415,7 +417,7 @@ async def check_new_week():
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
     
-    # Enregistre la vue comme persistante (important après redémarrage)
+    # Vue persistante (avec custom_id)
     bot.add_view(QuotaView())
 
     if not auto_update.is_running():
