@@ -128,21 +128,29 @@ class QuotaView(discord.ui.View):
 
     @discord.ui.button(label="Faire quota", style=discord.ButtonStyle.green)
     async def faire_quota(self, interaction: discord.Interaction, button):
+        # Répond immédiatement pour éviter le timeout
+        await interaction.response.defer(ephemeral=True)
+
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
                 if not c.fetchone():
-                    return await interaction.response.send_message("❌ Tu n'es pas autorisé.", ephemeral=True)
+                    return await interaction.followup.send("❌ Tu n'es pas autorisé.", ephemeral=True)
+
         objectifs_text = "**Objectifs Hebdomadaires :**\n"
         for t, nb in OBJECTIFS.items():
             if t != "Cambriolage":
                 objectifs_text += f"• **{t}** → **{nb}**\n"
-        await interaction.response.send_message(objectifs_text + "\nChoisis ton quota :", view=QuotaSelectView(), ephemeral=True)
+
+        await interaction.followup.send(objectifs_text + "\nChoisis ton quota :", view=QuotaSelectView(), ephemeral=True)
 
     @discord.ui.button(label="📢 Rappel Inactifs", style=discord.ButtonStyle.red)
     async def rappel(self, interaction: discord.Interaction, button):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
+
+        # Répond immédiatement
+        await interaction.response.defer(ephemeral=True)
         await do_rappel(interaction)
 
 # ==================== FONCTIONS ====================
@@ -406,6 +414,10 @@ async def check_new_week():
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
+    
+    # Enregistre la vue comme persistante (important après redémarrage)
+    bot.add_view(QuotaView())
+
     if not auto_update.is_running():
         auto_update.start()
     if not check_new_week.is_running():
