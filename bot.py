@@ -15,6 +15,7 @@ LOG_CHANNEL_ID = 1508882228166398073
 TABLEAU_CHANNEL_ID = None
 CURRENT_CLASSEMENT_MSG_ID = None
 CURRENT_QUOTAS_MSG_ID = None
+ROLE_VENDETTA = "Vendetta"
 
 # ==================== OBJECTIFS ====================
 OBJECTIFS = {
@@ -53,6 +54,40 @@ def migrate_database():
 
 migrate_database()
 
+def has_vendetta(member: discord.Member) -> bool:
+    return any(role.name.lower() == ROLE_VENDETTA.lower() for role in member.roles)
+
+async def sync_authorized_users(guild: discord.Guild):
+    """Synchronise automatiquement les membres qui ont le rôle Vendetta"""
+    added = 0
+    removed = 0
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT user_id FROM authorized_users")
+            current = {row[0] for row in c.fetchall()}
+
+            members_with_role = [m for m in guild.members if has_vendetta(m) and not m.bot]
+            members_ids = {m.id for m in members_with_role}
+
+            for member in members_with_role:
+                if member.id not in current:
+                    c.execute("""
+                        INSERT INTO authorized_users (user_id, username)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+                    """, (member.id, member.display_name))
+                    added += 1
+
+            for user_id in current:
+                if user_id not in members_ids:
+                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
+                    removed += 1
+
+            conn.commit()
+
+    print(f"🔄 Sync quotas → +{added} / -{removed}")
+    await update_tableaux()
+
 # ==================== VIEWS ====================
 class QuotaSelect(discord.ui.Select):
     def __init__(self):
@@ -65,8 +100,7 @@ class QuotaSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        type_quota = self.values[0]
-        await self.ask_quantity(interaction, type_quota)
+        await self.ask_quantity(interaction, self.values[0])
 
     async def ask_quantity(self, interaction: discord.Interaction, type_quota: str):
         try:
@@ -91,6 +125,7 @@ class QuotaSelect(discord.ui.Select):
             today = date.today()
             week_start = today - timedelta(days=today.weekday())
             image_url = photo_msg.attachments[0].url
+
             with get_db() as conn:
                 with conn.cursor() as c:
                     c.execute("""
@@ -117,7 +152,6 @@ class QuotaSelect(discord.ui.Select):
             except:
                 pass
 
-            # Mise à jour immédiate des tableaux après soumission
             await update_tableaux()
 
         except Exception as e:
@@ -135,6 +169,9 @@ class QuotaView(discord.ui.View):
 
     @discord.ui.button(label="Faire quota", style=discord.ButtonStyle.green)
     async def faire_quota(self, interaction: discord.Interaction, button):
+        if not has_vendetta(interaction.user):
+            return await interaction.response.send_message("❌ Tu n'as pas le rôle Vendetta.", ephemeral=True)
+
         with get_db() as conn:
             with conn.cursor() as c:
                 c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (interaction.user.id,))
@@ -189,7 +226,7 @@ async def create_new_tableaux():
     msg1 = await channel.send(embed=embed1)
     CURRENT_CLASSEMENT_MSG_ID = msg1.id
 
-    embed2 = discord.Embed(title=f"📋 Ce qu'il reste à faire - Semaine du {week_start}", color=discord.Color.blue())
+    embed2 = discord.Embed(title=f"📋 Progression des Quotas - Semaine du {week_start}", color=discord.Color.blue())
     embed2.description = "Chargement..."
     msg2 = await channel.send(embed=embed2)
     CURRENT_QUOTAS_MSG_ID = msg2.id
@@ -253,7 +290,7 @@ async def update_quotas_tableau():
                 data = c.fetchall()
 
         embed = discord.Embed(
-            title=f"📋 Ce qu'il reste à faire - Semaine du {week_start}",
+            title=f"📋 Progression des Quotas - Semaine du {week_start}",
             color=discord.Color.blue()
         )
 
@@ -264,23 +301,11 @@ async def update_quotas_tableau():
         else:
             for row in data:
                 username, c, a, s = row
-                missing = []
-
-                rest_c = max(0, OBJECTIFS["Contenair"] - int(c))
-                rest_a = max(0, OBJECTIFS["Atm"] - int(a))
-                rest_s = max(0, OBJECTIFS["Superette"] - int(s))
-
-                if rest_c > 0:
-                    missing.append(f"📦 {rest_c} Contenair")
-                if rest_a > 0:
-                    missing.append(f"🏧 {rest_a} ATM")
-                if rest_s > 0:
-                    missing.append(f"🏪 {rest_s} Superette")
-
-                if missing:
-                    desc += f"**{username}** → {', '.join(missing)}\n"
-                else:
-                    desc += f"**{username}** → ✅ Objectifs atteints\n"
+                c, a, s = int(c), int(a), int(s)
+                desc += f"**{username}**\n"
+                desc += f"📦 Contenair : **{c}/{OBJECTIFS['Contenair']}** | "
+                desc += f"🏧 ATM : **{a}/{OBJECTIFS['Atm']}** | "
+                desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}**\n\n"
 
         embed.description = desc
         embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
@@ -338,6 +363,14 @@ async def settableaux(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def sync(ctx):
+    """Force la synchronisation des membres avec le rôle Vendetta"""
+    await ctx.send("🔄 Synchronisation en cours...")
+    await sync_authorized_users(ctx.guild)
+    await ctx.send("✅ Synchronisation terminée.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def listusers(ctx):
     with get_db() as conn:
         with conn.cursor() as c:
@@ -346,36 +379,7 @@ async def listusers(ctx):
     if not users:
         return await ctx.send("❌ Aucun utilisateur autorisé.")
     desc = "\n".join([f"• **{u}** (`{uid}`)" for u, uid in users])
-    await ctx.send(embed=discord.Embed(title="👥 Utilisateurs Autorisés", description=desc, color=discord.Color.green()))
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def adduser(ctx, member: discord.Member):
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                      (member.id, member.display_name))
-            conn.commit()
-    await ctx.send(f"✅ **{member.display_name}** ajouté.")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def removeuser(ctx, member: discord.Member):
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
-            conn.commit()
-    await ctx.send(f"✅ **{member.display_name}** retiré.")
-
-@bot.command(name="removeuserid", aliases=["rid"])
-@commands.has_permissions(administrator=True)
-async def remove_user_id(ctx, user_id: int):
-    with get_db() as conn:
-        with conn.cursor() as c:
-            c.execute("DELETE FROM authorized_users WHERE user_id = %s", (user_id,))
-            deleted = c.rowcount
-            conn.commit()
-    await ctx.send(f"✅ Utilisateur `{user_id}` retiré." if deleted > 0 else f"❌ ID `{user_id}` non trouvé.")
+    await ctx.send(embed=discord.Embed(title="👥 Utilisateurs Autorisés (Vendetta)", description=desc, color=discord.Color.green()))
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -397,6 +401,7 @@ async def check_new_week():
     if TABLEAU_CHANNEL_ID and date.today().weekday() == 0 and datetime.now().hour < 3:
         await create_new_tableaux()
 
+# ==================== EVENTS ====================
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
@@ -404,6 +409,49 @@ async def on_ready():
         auto_update.start()
     if not check_new_week.is_running():
         check_new_week.start()
+
+    # Sync automatique au démarrage
+    for guild in bot.guilds:
+        await sync_authorized_users(guild)
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    before_has = has_vendetta(before)
+    after_has = has_vendetta(after)
+
+    if before_has == after_has:
+        return
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                if after_has and not before_has:
+                    c.execute("""
+                        INSERT INTO authorized_users (user_id, username)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username
+                    """, (after.id, after.display_name))
+                    print(f"✅ {after.display_name} a reçu Vendetta → ajouté aux quotas")
+                elif before_has and not after_has:
+                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (after.id,))
+                    print(f"❌ {after.display_name} a perdu Vendetta → retiré des quotas")
+                conn.commit()
+
+        await update_tableaux()
+    except Exception as e:
+        print(f"Erreur on_member_update: {e}")
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("DELETE FROM authorized_users WHERE user_id = %s", (member.id,))
+                conn.commit()
+                print(f"🗑️ {member.display_name} a quitté → retiré des quotas")
+        await update_tableaux()
+    except Exception as e:
+        print(f"Erreur on_member_remove: {e}")
 
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
