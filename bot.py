@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, UTC
 import asyncio
 
 intents = discord.Intents.default()
@@ -12,12 +12,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ==================== CONFIG ====================
 LOG_CHANNEL_ID = 1508882228166398073
-TABLEAU_CHANNEL_ID = None
-CURRENT_CLASSEMENT_MSG_ID = None
-CURRENT_QUOTAS_MSG_ID = None
 ROLE_VENDETTA = "Vendetta"
 
-# ==================== OBJECTIFS ====================
 OBJECTIFS = {
     "Contenair": 40,
     "Atm": 12,
@@ -49,6 +45,15 @@ def migrate_database():
                     username TEXT
                 );
             ''')
+            # Nouvelle table pour stocker les messages des tableaux
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS tableau_messages (
+                    week_start DATE PRIMARY KEY,
+                    channel_id BIGINT NOT NULL,
+                    classement_msg_id BIGINT NOT NULL,
+                    quotas_msg_id BIGINT NOT NULL
+                );
+            ''')
             conn.commit()
     print("✅ Base de données prête !")
 
@@ -58,7 +63,6 @@ def has_vendetta(member: discord.Member) -> bool:
     return any(role.name.lower() == ROLE_VENDETTA.lower() for role in member.roles)
 
 async def sync_authorized_users(guild: discord.Guild):
-    """Synchronise automatiquement les membres qui ont le rôle Vendetta"""
     added = 0
     removed = 0
     with get_db() as conn:
@@ -189,57 +193,73 @@ class QuotaView(discord.ui.View):
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
         await do_rappel(interaction)
 
-# ==================== FONCTIONS ====================
-async def do_rappel(interaction: discord.Interaction):
-    week_start = date.today() - timedelta(days=date.today().weekday())
+# ==================== FONCTIONS TABLEAUX ====================
+async def get_tableau_ids(week_start: date):
     with get_db() as conn:
         with conn.cursor() as c:
-            c.execute("SELECT DISTINCT user_id FROM quotas WHERE week_start = %s", (week_start,))
-            active = {row[0] for row in c.fetchall()}
-            c.execute("SELECT user_id FROM authorized_users")
-            all_users = [row[0] for row in c.fetchall()]
+            c.execute("""
+                SELECT channel_id, classement_msg_id, quotas_msg_id
+                FROM tableau_messages WHERE week_start = %s
+            """, (week_start,))
+            return c.fetchone()
 
-    reminded = 0
-    for user_id in all_users:
-        if user_id not in active:
-            member = interaction.guild.get_member(user_id)
-            if member:
-                try:
-                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.")
-                    reminded += 1
-                except:
-                    pass
-    await interaction.followup.send(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
+async def save_tableau_ids(week_start: date, channel_id: int, classement_id: int, quotas_id: int):
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                INSERT INTO tableau_messages (week_start, channel_id, classement_msg_id, quotas_msg_id)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (week_start) DO UPDATE SET
+                    channel_id = EXCLUDED.channel_id,
+                    classement_msg_id = EXCLUDED.classement_msg_id,
+                    quotas_msg_id = EXCLUDED.quotas_msg_id
+            """, (week_start, channel_id, classement_id, quotas_id))
+            conn.commit()
 
-async def create_new_tableaux():
-    global CURRENT_CLASSEMENT_MSG_ID, CURRENT_QUOTAS_MSG_ID
-    if not TABLEAU_CHANNEL_ID:
-        return
-    channel = bot.get_channel(TABLEAU_CHANNEL_ID)
-    if not channel:
-        return
-
+async def create_new_tableaux(channel: discord.TextChannel = None):
     week_start = date.today() - timedelta(days=date.today().weekday())
+
+    # Vérifier si des tableaux existent déjà pour cette semaine
+    existing = await get_tableau_ids(week_start)
+    if existing:
+        print(f"Tableaux déjà existants pour la semaine du {week_start}")
+        await update_tableaux()
+        return
+
+    if not channel:
+        # Récupérer le dernier channel utilisé
+        with get_db() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT channel_id FROM tableau_messages ORDER BY week_start DESC LIMIT 1")
+                row = c.fetchone()
+                if row:
+                    channel = bot.get_channel(row[0])
+        if not channel:
+            print("❌ Aucun channel défini pour les tableaux")
+            return
 
     embed1 = discord.Embed(title=f"🏆 Classement par Points - Semaine du {week_start}", color=discord.Color.gold())
     embed1.description = "Chargement..."
     msg1 = await channel.send(embed=embed1)
-    CURRENT_CLASSEMENT_MSG_ID = msg1.id
 
     embed2 = discord.Embed(title=f"📋 Progression des Quotas - Semaine du {week_start}", color=discord.Color.blue())
     embed2.description = "Chargement..."
     msg2 = await channel.send(embed=embed2)
-    CURRENT_QUOTAS_MSG_ID = msg2.id
 
+    await save_tableau_ids(week_start, channel.id, msg1.id, msg2.id)
     await update_tableaux()
+    print(f"✅ Nouveaux tableaux créés pour la semaine du {week_start}")
 
 async def update_classement():
-    if not CURRENT_CLASSEMENT_MSG_ID or not TABLEAU_CHANNEL_ID:
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    data_ids = await get_tableau_ids(week_start)
+    if not data_ids:
         return
+
+    channel_id, classement_msg_id, _ = data_ids
     try:
-        channel = bot.get_channel(TABLEAU_CHANNEL_ID)
-        message = await channel.fetch_message(CURRENT_CLASSEMENT_MSG_ID)
-        week_start = date.today() - timedelta(days=date.today().weekday())
+        channel = bot.get_channel(channel_id)
+        message = await channel.fetch_message(classement_msg_id)
 
         with get_db() as conn:
             with conn.cursor() as c:
@@ -262,18 +282,21 @@ async def update_classement():
             embed.description = desc
         else:
             embed.description = "Aucun quota enregistré cette semaine."
-        embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
+        embed.set_footer(text=f"MAJ : {datetime.now(UTC).strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
     except Exception as e:
         print(f"Erreur classement: {e}")
 
 async def update_quotas_tableau():
-    if not CURRENT_QUOTAS_MSG_ID or not TABLEAU_CHANNEL_ID:
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    data_ids = await get_tableau_ids(week_start)
+    if not data_ids:
         return
+
+    channel_id, _, quotas_msg_id = data_ids
     try:
-        channel = bot.get_channel(TABLEAU_CHANNEL_ID)
-        message = await channel.fetch_message(CURRENT_QUOTAS_MSG_ID)
-        week_start = date.today() - timedelta(days=date.today().weekday())
+        channel = bot.get_channel(channel_id)
+        message = await channel.fetch_message(quotas_msg_id)
 
         with get_db() as conn:
             with conn.cursor() as c:
@@ -308,7 +331,7 @@ async def update_quotas_tableau():
                 desc += f"🏪 Superette : **{s}/{OBJECTIFS['Superette']}**\n\n"
 
         embed.description = desc
-        embed.set_footer(text=f"MAJ : {datetime.now().strftime('%H:%M:%S')}")
+        embed.set_footer(text=f"MAJ : {datetime.now(UTC).strftime('%H:%M:%S')}")
         await message.edit(embed=embed)
     except Exception as e:
         print(f"Erreur tableau quotas: {e}")
@@ -316,6 +339,27 @@ async def update_quotas_tableau():
 async def update_tableaux():
     await update_classement()
     await update_quotas_tableau()
+
+async def do_rappel(interaction: discord.Interaction):
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    with get_db() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT DISTINCT user_id FROM quotas WHERE week_start = %s", (week_start,))
+            active = {row[0] for row in c.fetchall()}
+            c.execute("SELECT user_id FROM authorized_users")
+            all_users = [row[0] for row in c.fetchall()]
+
+    reminded = 0
+    for user_id in all_users:
+        if user_id not in active:
+            member = interaction.guild.get_member(user_id)
+            if member:
+                try:
+                    await member.send("⚠️ **Rappel Quotas Diamond City**\nTu n'as pas encore fait de quota cette semaine.")
+                    reminded += 1
+                except:
+                    pass
+    await interaction.followup.send(f"✅ Rappel envoyé à **{reminded}** membre(s).", ephemeral=True)
 
 # ==================== COMMANDES ====================
 @bot.command(name="resetquotas", aliases=["reset", "resetquota"])
@@ -351,20 +395,17 @@ async def checklastweek(ctx):
 @commands.has_permissions(administrator=True)
 async def newweek(ctx):
     await ctx.send("🔄 Création des tableaux de la nouvelle semaine...")
-    await create_new_tableaux()
+    await create_new_tableaux(ctx.channel)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def settableaux(ctx):
-    global TABLEAU_CHANNEL_ID
-    TABLEAU_CHANNEL_ID = ctx.channel.id
-    await ctx.send("✅ Channel des tableaux défini.")
-    await create_new_tableaux()
+    await ctx.send("✅ Channel des tableaux défini. Création des tableaux...")
+    await create_new_tableaux(ctx.channel)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def sync(ctx):
-    """Force la synchronisation des membres avec le rôle Vendetta"""
     await ctx.send("🔄 Synchronisation en cours...")
     await sync_authorized_users(ctx.guild)
     await ctx.send("✅ Synchronisation terminée.")
@@ -396,10 +437,15 @@ async def setup(ctx):
 async def auto_update():
     await update_tableaux()
 
-@tasks.loop(minutes=30)
+@tasks.loop(hours=1)
 async def check_new_week():
-    if TABLEAU_CHANNEL_ID and date.today().weekday() == 0 and datetime.now().hour < 3:
-        await create_new_tableaux()
+    # Vérifie une fois par heure si on est lundi et si les tableaux de la semaine existent déjà
+    if date.today().weekday() == 0:
+        week_start = date.today() - timedelta(days=date.today().weekday())
+        existing = await get_tableau_ids(week_start)
+        if not existing:
+            print("📅 Nouveau lundi détecté → création des tableaux")
+            await create_new_tableaux()
 
 # ==================== EVENTS ====================
 @bot.event
@@ -410,7 +456,6 @@ async def on_ready():
     if not check_new_week.is_running():
         check_new_week.start()
 
-    # Sync automatique au démarrage
     for guild in bot.guilds:
         await sync_authorized_users(guild)
 
