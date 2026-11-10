@@ -10,6 +10,7 @@ TZ = ZoneInfo("Europe/Paris")
 
 # ==================== CONFIG ====================
 LOG_CHANNEL_ID = 1508882228166398073
+ROLE_NAME = "vendetta"  # nom du rôle suivi (insensible à la casse)
 
 # clé -> (nom affiché, emoji, code court pour l'en-tête du tableau)
 TYPES = {
@@ -171,6 +172,51 @@ async def refresh_tableau():
         print("Message du tableau introuvable : refais !settableaux")
     except Exception as e:
         print(f"Erreur refresh tableau: {e}")
+
+
+# ==================== SYNC DU RÔLE ====================
+async def sync_members():
+    """Les membres suivis = tous ceux qui ont le rôle ROLE_NAME."""
+    changed = False
+    for guild in bot.guilds:
+        role = discord.utils.find(lambda r: r.name.lower() == ROLE_NAME.lower(), guild.roles)
+        if not role:
+            print(f"⚠️ Rôle '{ROLE_NAME}' introuvable dans {guild.name}")
+            continue
+        if not guild.chunked:
+            await guild.chunk()
+
+        members = {m.id: m.display_name for m in role.members if not m.bot}
+        with db() as c:
+            c.execute("SELECT user_id, username FROM authorized_users")
+            existing = dict(c.fetchall())
+
+            for uid, name in members.items():
+                if uid not in existing:
+                    c.execute("INSERT INTO authorized_users (user_id, username) VALUES (%s, %s)", (uid, name))
+                    changed = True
+                elif existing[uid] != name:
+                    c.execute("UPDATE authorized_users SET username = %s WHERE user_id = %s", (name, uid))
+                    changed = True
+
+            for uid in existing:
+                if uid not in members:
+                    c.execute("DELETE FROM authorized_users WHERE user_id = %s", (uid,))
+                    changed = True
+
+    if changed:
+        await refresh_tableau()
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if before.roles != after.roles or before.display_name != after.display_name:
+        await sync_members()
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await sync_members()
 
 
 # ==================== VIEWS ====================
@@ -372,9 +418,17 @@ async def check_new_week():
             await post_tableau(channel)
 
 
+@tasks.loop(minutes=10)
+async def auto_sync():
+    """Filet de sécurité : resynchronise le rôle toutes les 10 minutes."""
+    await sync_members()
+
+
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} est en ligne !")
+    if not auto_sync.is_running():
+        auto_sync.start()  # fait aussi une synchro immédiate au démarrage
     if not check_new_week.is_running():
         check_new_week.start()
 
