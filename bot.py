@@ -27,6 +27,11 @@ def get_db():
 def migrate_database():
     with get_db() as conn:
         with conn.cursor() as c:
+            # Nettoyage des anciennes tables
+            c.execute("DROP TABLE IF EXISTS quotas;")
+            c.execute("DROP TABLE IF EXISTS tableau_messages;")
+            c.execute("DROP TABLE IF EXISTS daily_messages;")
+
             c.execute('''
                 CREATE TABLE IF NOT EXISTS quotas (
                     id SERIAL PRIMARY KEY,
