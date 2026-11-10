@@ -321,10 +321,19 @@ def norm(text):
     return "".join(ch for ch in t if unicodedata.category(ch) not in ("Cf", "Mn")).casefold()
 
 
-def find_roles(guild):
-    """Rôles suivis : par ID si ROLE_IDS est rempli, sinon par nom (contient ROLE_NAME)."""
+def configured_role_ids():
+    """IDs choisis : ROLE_IDS dans le code, sinon ceux enregistrés avec !setrole."""
     if ROLE_IDS:
-        return [r for r in (guild.get_role(i) for i in ROLE_IDS) if r]
+        return list(ROLE_IDS)
+    raw = get_config("role_ids")
+    return [int(x) for x in raw.split(",") if x.strip()] if raw else []
+
+
+def find_roles(guild):
+    """Rôles suivis : par ID (code ou !setrole), sinon par nom (contient ROLE_NAME)."""
+    ids = configured_role_ids()
+    if ids:
+        return [r for r in (guild.get_role(i) for i in ids) if r]
     return [r for r in guild.roles if norm(ROLE_NAME) in norm(r.name)]
 
 
@@ -334,7 +343,7 @@ async def sync_members():
     for guild in bot.guilds:
         roles = find_roles(guild)
         if not roles:
-            print(f"⚠️ Aucun rôle '{ROLE_NAME}' trouvé dans {guild.name} (utilise !roles puis ROLE_IDS)")
+            print(f"⚠️ Aucun rôle '{ROLE_NAME}' trouvé dans {guild.name} (tape !setrole sur Discord pour choisir le rôle)")
             continue
         if not guild.chunked:
             await guild.chunk()
@@ -519,6 +528,29 @@ class ChoisirMembre(discord.ui.View):
             self.add_item(MembreSelect(chunk, len(chunks)))
 
 
+# ==================== VIEW : CHOIX DU RÔLE ====================
+class RoleChoisir(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.select(cls=discord.ui.RoleSelect, placeholder="Choisis le rôle à suivre...",
+                       min_values=1, max_values=5)
+    async def choisir(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
+        roles_choisis = [r for r in select.values if not r.is_default()]  # jamais @everyone
+        if not roles_choisis:
+            return await interaction.response.send_message("❌ Choisis un autre rôle que @everyone.", ephemeral=True)
+
+        set_config("role_ids", ",".join(str(r.id) for r in roles_choisis))
+        await interaction.response.edit_message(content="⏳ Synchronisation...", view=None)
+        await sync_members()
+        await refresh_tableau()
+        noms = ", ".join(r.name for r in roles_choisis)
+        await interaction.edit_original_response(
+            content=f"✅ Rôle enregistré : **{noms}** → **{len(get_members())}** membre(s) suivis.")
+
+
 # ==================== VIEW : HISTORIQUE ====================
 class HistoriqueView(discord.ui.View):
     def __init__(self, offset=0):
@@ -624,8 +656,7 @@ async def sync(ctx):
     """Force la synchro avec le rôle."""
     roles = find_roles(ctx.guild)
     if not roles:
-        return await ctx.send("❌ Rôle introuvable. Tape `!roles vendetta` pour voir les rôles et leurs ID, "
-                              "puis mets l'ID dans `ROLE_IDS` en haut du fichier.")
+        return await ctx.send("❌ Rôle introuvable. Tape `!setrole` et choisis le rôle dans la liste.")
     await sync_members()
     await refresh_tableau()
     noms = ", ".join(r.name for r in roles)
@@ -640,6 +671,13 @@ async def roles(ctx, filtre: str = ""):
               for r in reversed(ctx.guild.roles)
               if r.name != "@everyone" and norm(filtre) in norm(r.name)]
     await ctx.send("\n".join(lignes)[:1990] or "Aucun rôle trouvé.")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setrole(ctx):
+    """Choisis dans une liste le rôle dont les membres sont suivis (sans mention, sans ID)."""
+    await ctx.send("Choisis le rôle dont les membres doivent apparaître dans le tableau :", view=RoleChoisir())
 
 
 @bot.command(aliases=["histo"])
