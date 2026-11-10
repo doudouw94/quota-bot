@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import psycopg2
 import os
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,7 +11,8 @@ TZ = ZoneInfo("Europe/Paris")
 
 # ==================== CONFIG ====================
 LOG_CHANNEL_ID = 1508882228166398073
-ROLE_NAME = "vendetta"   # rôle suivi (insensible à la casse)
+ROLE_NAME = "vendetta"   # si ROLE_IDS est vide : tous les rôles dont le nom CONTIENT ce mot (insensible à la casse)
+ROLE_IDS = []            # recommandé : IDs exacts des rôles suivis, ex: [123456789012345678] (voir la commande !roles)
 RESET_HOUR = 0           # heure (Paris) à laquelle une nouvelle journée commence (ex: 6 = 6h du matin)
 
 # clé -> (nom affiché, emoji, code court pour l'en-tête du tableau)
@@ -313,18 +315,31 @@ def build_membre_embed(member, offset=0):
 
 
 # ==================== SYNC DU RÔLE ====================
+def norm(text):
+    """Normalise un nom : les polices fantaisie (𝗩𝗘𝗡𝗗𝗘𝗧𝗧𝗔, ＶＥＮＤＥＴＴＡ), caractères invisibles et majuscules."""
+    t = unicodedata.normalize("NFKC", text)
+    return "".join(ch for ch in t if unicodedata.category(ch) not in ("Cf", "Mn")).casefold()
+
+
+def find_roles(guild):
+    """Rôles suivis : par ID si ROLE_IDS est rempli, sinon par nom (contient ROLE_NAME)."""
+    if ROLE_IDS:
+        return [r for r in (guild.get_role(i) for i in ROLE_IDS) if r]
+    return [r for r in guild.roles if norm(ROLE_NAME) in norm(r.name)]
+
+
 async def sync_members():
-    """Les membres suivis = tous ceux qui ont le rôle ROLE_NAME."""
+    """Les membres suivis = tous ceux qui ont un des rôles suivis."""
     changed = False
     for guild in bot.guilds:
-        role = discord.utils.find(lambda r: r.name.lower() == ROLE_NAME.lower(), guild.roles)
-        if not role:
-            print(f"⚠️ Rôle '{ROLE_NAME}' introuvable dans {guild.name}")
+        roles = find_roles(guild)
+        if not roles:
+            print(f"⚠️ Aucun rôle '{ROLE_NAME}' trouvé dans {guild.name} (utilise !roles puis ROLE_IDS)")
             continue
         if not guild.chunked:
             await guild.chunk()
 
-        members = {m.id: m.display_name for m in role.members if not m.bot}
+        members = {m.id: m.display_name for role in roles for m in role.members if not m.bot}
         with db() as c:
             c.execute("SELECT user_id, username FROM authorized_users")
             existing = dict(c.fetchall())
@@ -607,9 +622,24 @@ async def reset_quotas(ctx, confirm: str = None):
 @commands.has_permissions(administrator=True)
 async def sync(ctx):
     """Force la synchro avec le rôle."""
+    roles = find_roles(ctx.guild)
+    if not roles:
+        return await ctx.send("❌ Rôle introuvable. Tape `!roles vendetta` pour voir les rôles et leurs ID, "
+                              "puis mets l'ID dans `ROLE_IDS` en haut du fichier.")
     await sync_members()
     await refresh_tableau()
-    await ctx.send(f"✅ Synchronisé : **{len(get_members())}** membre(s) avec le rôle **{ROLE_NAME}**.")
+    noms = ", ".join(r.name for r in roles)
+    await ctx.send(f"✅ Synchronisé : **{len(get_members())}** membre(s) via : {noms}")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def roles(ctx, filtre: str = ""):
+    """!roles | !roles vendetta  -> liste les rôles du serveur avec leur ID."""
+    lignes = [f"`{r.id}` **{r.name}** ({len(r.members)} membres)"
+              for r in reversed(ctx.guild.roles)
+              if r.name != "@everyone" and norm(filtre) in norm(r.name)]
+    await ctx.send("\n".join(lignes)[:1990] or "Aucun rôle trouvé.")
 
 
 @bot.command(aliases=["histo"])
