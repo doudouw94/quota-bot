@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import psycopg2
 import os
 import unicodedata
+import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -183,6 +184,16 @@ def build_embed():
 
 
 async def post_tableau(channel):
+    # Supprime l'ancien tableau suivi (évite les doublons quand on retape !settableaux)
+    old_ch, old_msg = get_config("tableau_channel"), get_config("tableau_msg")
+    if old_ch and old_msg:
+        try:
+            ch = bot.get_channel(int(old_ch))
+            if ch:
+                await (await ch.fetch_message(int(old_msg))).delete()
+        except Exception:
+            pass
+
     msg = await channel.send(embed=build_embed(), view=TableauView())
     set_config("tableau_channel", channel.id)
     set_config("tableau_msg", msg.id)
@@ -691,6 +702,24 @@ async def roles(ctx, filtre: str = ""):
 
 
 @bot.command()
+@commands.guild_only()
+@commands.has_permissions(administrator=True)
+async def garderceserveur(ctx, confirm: str = None):
+    """Le bot quitte tous les autres serveurs et ne garde que celui-ci."""
+    autres = [g for g in bot.guilds if g.id != ctx.guild.id]
+    if not autres:
+        return await ctx.send("✅ Le bot n'est que dans ce serveur.")
+    noms = ", ".join(f"**{g.name}**" for g in autres)
+    if confirm != "confirm":
+        return await ctx.send(f"⚠️ Le bot est aussi dans : {noms}.\n"
+                              "Pour qu'il les quitte, tape `!garderceserveur confirm`.")
+    for g in autres:
+        await g.leave()
+    set_config("guild_id", ctx.guild.id)
+    await ctx.send(f"✅ Le bot a quitté : {noms}.")
+
+
+@bot.command()
 @commands.has_permissions(administrator=True)
 async def setrole(ctx):
     """Choisis dans une liste le rôle dont les membres sont suivis (sans mention, sans ID)."""
@@ -761,9 +790,28 @@ async def on_ready():
         check_new_day.start()
 
 
+_lock_conn = None  # on garde la connexion ouverte : le verrou saute si le processus s'arrête
+
+
+def wait_for_single_instance():
+    """Pendant un redéploiement Railway, l'ancienne et la nouvelle version peuvent tourner ensemble
+    (réponses en double). Verrou PostgreSQL : la nouvelle instance attend que l'ancienne soit arrêtée."""
+    global _lock_conn
+    _lock_conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+    _lock_conn.autocommit = True
+    cur = _lock_conn.cursor()
+    while True:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (727272,))
+        if cur.fetchone()[0]:
+            return
+        print("⏳ Une autre instance du bot est encore active, j'attends...")
+        time.sleep(5)
+
+
 if __name__ == "__main__":
     token = os.getenv("TOKEN")
     if token:
+        wait_for_single_instance()
         bot.run(token)
     else:
         print("❌ TOKEN manquant")
