@@ -340,7 +340,10 @@ def find_roles(guild):
 async def sync_members():
     """Les membres suivis = tous ceux qui ont un des rôles suivis."""
     changed = False
+    gid = get_config("guild_id")
     for guild in bot.guilds:
+        if gid and guild.id != int(gid):
+            continue  # serveur de test, etc. : ignoré une fois le serveur choisi avec !setrole
         roles = find_roles(guild)
         if not roles:
             print(f"⚠️ Aucun rôle '{ROLE_NAME}' trouvé dans {guild.name} (tape !setrole sur Discord pour choisir le rôle)")
@@ -548,6 +551,7 @@ class RoleMenu(discord.ui.Select):
             return await interaction.response.send_message("❌ Rôle introuvable.", ephemeral=True)
 
         set_config("role_ids", role.id)
+        set_config("guild_id", interaction.guild.id)
         await interaction.response.edit_message(content="⏳ Synchronisation...", view=None)
         await sync_members()
         await refresh_tableau()
