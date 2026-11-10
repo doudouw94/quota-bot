@@ -529,26 +529,39 @@ class ChoisirMembre(discord.ui.View):
 
 
 # ==================== VIEW : CHOIX DU RÔLE ====================
-class RoleChoisir(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
+class RoleMenu(discord.ui.Select):
+    """Liste des rôles du serveur (25 par liste), avec le nombre de membres de chaque rôle."""
 
-    @discord.ui.select(cls=discord.ui.RoleSelect, placeholder="Choisis le rôle à suivre...",
-                       min_values=1, max_values=5)
-    async def choisir(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+    def __init__(self, chunk, total, index):
+        options = [
+            discord.SelectOption(label=f"{r.name} ({len(r.members)})"[:100], value=str(r.id))
+            for r in chunk
+        ]
+        placeholder = "Choisis le rôle à suivre..." if total == 1 else f"Rôles - liste {index}/{total}"
+        super().__init__(placeholder=placeholder, options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin seulement.", ephemeral=True)
-        roles_choisis = [r for r in select.values if not r.is_default()]  # jamais @everyone
-        if not roles_choisis:
-            return await interaction.response.send_message("❌ Choisis un autre rôle que @everyone.", ephemeral=True)
+        role = interaction.guild.get_role(int(self.values[0]))
+        if not role:
+            return await interaction.response.send_message("❌ Rôle introuvable.", ephemeral=True)
 
-        set_config("role_ids", ",".join(str(r.id) for r in roles_choisis))
+        set_config("role_ids", role.id)
         await interaction.response.edit_message(content="⏳ Synchronisation...", view=None)
         await sync_members()
         await refresh_tableau()
-        noms = ", ".join(r.name for r in roles_choisis)
         await interaction.edit_original_response(
-            content=f"✅ Rôle enregistré : **{noms}** → **{len(get_members())}** membre(s) suivis.")
+            content=f"✅ Rôle enregistré : **{role.name}** → **{len(get_members())}** membre(s) suivis.")
+
+
+class RoleChoisir(discord.ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=180)
+        roles = [r for r in reversed(guild.roles) if not r.is_default() and not r.managed]
+        chunks = [roles[i:i + 25] for i in range(0, len(roles), 25)][:5]  # 5 listes max = 125 rôles
+        for i, chunk in enumerate(chunks, 1):
+            self.add_item(RoleMenu(chunk, len(chunks), i))
 
 
 # ==================== VIEW : HISTORIQUE ====================
@@ -677,7 +690,13 @@ async def roles(ctx, filtre: str = ""):
 @commands.has_permissions(administrator=True)
 async def setrole(ctx):
     """Choisis dans une liste le rôle dont les membres sont suivis (sans mention, sans ID)."""
-    await ctx.send("Choisis le rôle dont les membres doivent apparaître dans le tableau :", view=RoleChoisir())
+    view = RoleChoisir(ctx.guild)
+    if not view.children:
+        return await ctx.send("❌ Je ne vois aucun rôle sur ce serveur.")
+    await ctx.send(
+        f"Serveur **{ctx.guild.name}** - choisis le rôle dont les membres doivent apparaître dans le tableau.\n"
+        "Le nombre entre parenthèses = membres qui ont ce rôle (VENDETTA devrait en avoir 22).",
+        view=view)
 
 
 @bot.command(aliases=["histo"])
