@@ -254,21 +254,41 @@ class CasesView(discord.ui.View):
         return callback
 
 
-class ChoisirMembre(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
+class MembreSelect(discord.ui.Select):
+    """Liste déroulante (25 membres max par liste, limite Discord)."""
 
-    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="Choisis le membre...", min_values=1, max_values=1)
-    async def choisir(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
-        member = select.values[0]
-        with db() as c:
-            c.execute("SELECT 1 FROM authorized_users WHERE user_id = %s", (member.id,))
-            ok = c.fetchone()
-        if not ok:
-            return await interaction.response.send_message(
-                "❌ Ce membre n'est pas dans la liste (`!adduser @membre`).", ephemeral=True)
+    def __init__(self, chunk, total_chunks):
+        options = [
+            discord.SelectOption(label=(name or str(uid))[:100], value=str(uid))
+            for uid, name in chunk
+        ]
+        if total_chunks == 1:
+            placeholder = "Choisis le membre..."
+        else:
+            first = (chunk[0][1] or "?")[:1].upper()
+            last = (chunk[-1][1] or "?")[:1].upper()
+            placeholder = f"Membres {first} → {last}"
+        super().__init__(placeholder=placeholder, options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        member = interaction.guild.get_member(int(self.values[0]))
+        if not member:
+            return await interaction.response.send_message("❌ Membre introuvable sur le serveur.", ephemeral=True)
         view = CasesView(member)
         await interaction.response.edit_message(content=view.texte(), view=view)
+
+
+class ChoisirMembre(discord.ui.View):
+    """N'affiche que les membres suivis (ceux qui ont le rôle vendetta)."""
+
+    def __init__(self):
+        super().__init__(timeout=120)
+        with db() as c:
+            c.execute("SELECT user_id, username FROM authorized_users ORDER BY LOWER(username)")
+            users = c.fetchall()
+        chunks = [users[i:i + 25] for i in range(0, len(users), 25)][:5]  # 5 listes max = 125 membres
+        for chunk in chunks:
+            self.add_item(MembreSelect(chunk, len(chunks)))
 
 
 class TableauView(discord.ui.View):
